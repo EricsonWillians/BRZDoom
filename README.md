@@ -1,8 +1,8 @@
-# Welcome to GZDoom!
+# Welcome to BRZDoom!
 
 [![Build Status](https://github.com/coelckers/gzdoom/workflows/Continuous%20Integration/badge.svg)](https://github.com/coelckers/gzdoom/actions?query=workflow%3A%22Continuous+Integration%22)
 
-## GZDoom is a modder-friendly OpenGL and Vulkan source port based on the DOOM engine
+## BRZDoom is an experimental fork of [GZDoom](https://github.com/coelckers/gzdoom).
 
 Copyright (c) 1998-2021 ZDoom + GZDoom teams, and contributors
 
