@@ -44,6 +44,8 @@ public:
 	~FMemArena();
 
 	void *Alloc(size_t size);
+	void* Calloc(size_t size);
+	const char* Strdup(const char*);
 	void FreeAll();
 	void FreeAllBlocks();
 	FString DumpInfo();

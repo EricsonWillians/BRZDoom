@@ -48,6 +48,7 @@
 #include "hw_skydome.h"
 #include "hw_viewpointbuffer.h"
 #include "hw_lightbuffer.h"
+#include "hw_bonebuffer.h"
 #include "gles_shaderprogram.h"
 #include "r_videoscale.h"
 #include "gles_buffers.h"
@@ -60,14 +61,11 @@
 #include "hw_cvars.h"
 
 EXTERN_CVAR (Bool, vid_vsync)
-EXTERN_CVAR(Bool, r_drawvoxels)
 EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Bool, cl_capfps)
 EXTERN_CVAR(Int, gl_pipeline_depth);
 
 EXTERN_CVAR(Bool, gl_sort_textures);
-
-void Draw2D(F2DDrawer *drawer, FRenderState &state);
 
 extern bool vid_hdr_active;
 
@@ -103,6 +101,7 @@ OpenGLFrameBuffer::~OpenGLFrameBuffer()
 	if (mSkyData != nullptr) delete mSkyData;
 	if (mViewpoints != nullptr) delete mViewpoints;
 	if (mLights != nullptr) delete mLights;
+	if (mBones != nullptr) delete mBones;
 	mShadowMap.Reset();
 
 	if (GLRenderer)
@@ -136,8 +135,9 @@ void OpenGLFrameBuffer::InitializeState()
 	glEnable(GL_DITHER);
 	glDisable(GL_CULL_FACE);
 	glDisable(GL_POLYGON_OFFSET_FILL);
-	
+
 	glEnable(GL_BLEND);
+	if (gles.depthClampAvailable) glEnable(GL_DEPTH_CLAMP);
 
 	glDisable(GL_DEPTH_TEST);
 
@@ -155,9 +155,11 @@ void OpenGLFrameBuffer::InitializeState()
 	mSkyData = new FSkyVertexBuffer;
 	mViewpoints = new HWViewpointBuffer(mPipelineNbr);
 	mLights = new FLightBuffer(mPipelineNbr);
+	mBones = new BoneBuffer(mPipelineNbr);
 	GLRenderer = new FGLRenderer(this);
 	GLRenderer->Initialize(GetWidth(), GetHeight());
 	static_cast<GLDataBuffer*>(mLights->GetBuffer())->BindBase();
+	static_cast<GLDataBuffer*>(mBones->GetBuffer())->BindBase();
 }
 
 //==========================================================================
@@ -236,7 +238,7 @@ const char* OpenGLFrameBuffer::DeviceName() const
 
 void OpenGLFrameBuffer::Swap()
 {
-	
+
 	Finish.Reset();
 	Finish.Clock();
 
@@ -244,7 +246,7 @@ void OpenGLFrameBuffer::Swap()
 
 	FPSLimit();
 	SwapBuffers();
-	
+
 	mVertexData->NextPipelineBuffer();
 	mVertexData->WaitSync();
 
@@ -286,7 +288,6 @@ void OpenGLFrameBuffer::PrecacheMaterial(FMaterial *mat, int translation)
 {
 	if (mat->Source()->GetUseType() == ETextureType::SWCanvas) return;
 
-	int flags = mat->GetScaleFlags();
 	int numLayers = mat->NumLayers();
 	MaterialLayerInfo* layer;
 	auto base = static_cast<FHardwareTexture*>(mat->GetLayer(0, translation, &layer));
@@ -371,6 +372,7 @@ void OpenGLFrameBuffer::WaitForCommands(bool finish)
 void OpenGLFrameBuffer::BeginFrame()
 {
 	SetViewportRects(nullptr);
+	mViewpoints->Clear();
 	if (GLRenderer != nullptr)
 		GLRenderer->BeginFrame();
 }

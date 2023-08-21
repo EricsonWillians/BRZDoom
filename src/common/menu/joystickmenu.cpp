@@ -119,6 +119,20 @@ DEFINE_ACTION_FUNCTION(IJoystickConfig, GetNumAxes)
 	ACTION_RETURN_INT(self->GetNumAxes());
 }
 
+DEFINE_ACTION_FUNCTION(IJoystickConfig, GetEnabled)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(IJoystickConfig);
+	ACTION_RETURN_BOOL(self->GetEnabled());
+}
+
+DEFINE_ACTION_FUNCTION(IJoystickConfig, SetEnabled)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(IJoystickConfig);
+	PARAM_BOOL(enabled);
+	self->SetEnabled(enabled);
+	return 0;
+}
+
 
 void UpdateJoystickMenu(IJoystickConfig *selected)
 {
@@ -160,12 +174,12 @@ void UpdateJoystickMenu(IJoystickConfig *selected)
 		it = opt->GetItem("ConnectMessage2");
 		if (it != nullptr) it->SetValue(0, !use_joystick);
 
-		for (int i = 0; i < (int)Joysticks.Size(); ++i)
+		for (int ii = 0; ii < (int)Joysticks.Size(); ++ii)
 		{
-			it = CreateOptionMenuItemJoyConfigMenu(Joysticks[i]->GetName(), Joysticks[i]);
+			it = CreateOptionMenuItemJoyConfigMenu(Joysticks[ii]->GetName(), Joysticks[ii]);
 			GC::WriteBarrier(opt, it);
 			opt->mItems.Push(it);
-			if (i == itemnum) opt->mSelectedItem = opt->mItems.Size();
+			if (ii == itemnum) opt->mSelectedItem = opt->mItems.Size();
 		}
 		if (opt->mSelectedItem >= (int)opt->mItems.Size())
 		{
@@ -179,15 +193,15 @@ void UpdateJoystickMenu(IJoystickConfig *selected)
 			auto p = CurrentMenu->PointerVar<IJoystickConfig>("mJoy");
 			if (p != nullptr)
 			{
-				unsigned i;
-				for (i = 0; i < Joysticks.Size(); ++i)
+				unsigned ii;
+				for (ii = 0; ii < Joysticks.Size(); ++ii)
 				{
-					if (Joysticks[i] == p)
+					if (Joysticks[ii] == p)
 					{
 						break;
 					}
 				}
-				if (i == Joysticks.Size())
+				if (ii == Joysticks.Size())
 				{
 					CurrentMenu->Close();
 				}

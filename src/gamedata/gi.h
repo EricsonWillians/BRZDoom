@@ -37,6 +37,7 @@
 #include "basics.h"
 #include "zstring.h"
 #include "name.h"
+#include "screenjob.h"
 
 // Flags are not user configurable and only depend on the standard IWADs
 enum
@@ -50,6 +51,7 @@ enum
 	GI_COMPATPOLY1			= 0x00000040,	// Hexen's MAP36 needs old polyobject drawing
 	GI_COMPATPOLY2			= 0x00000080,	// so does HEXDD's MAP47
 	GI_IGNORETITLEPATCHES	= 0x00000200,	// Ignore the map name graphics when not runnning in English language
+	GI_NOSECTIONMERGE		= 0x00000400,	// For the original id IWADs: avoid merging sections due to how idbsp created its sectors.
 };
 
 #include "gametype.h"
@@ -130,7 +132,7 @@ struct gameinfo_t
 
 	TArray<FName> PrecachedClasses;
 	TArray<FString> PrecachedTextures;
-	TArray<int> PrecachedSounds;
+	TArray<FSoundID> PrecachedSounds;
 	TArray<FString> EventHandlers;
 
 	FString titleMusic;
@@ -212,6 +214,7 @@ struct gameinfo_t
 	int fullscreenautoaspect = 3;
 	bool nomergepickupmsg;
 	bool mHideParTimes;
+	CutsceneDef IntroScene;
 
 	const char *GetFinalePage(unsigned int num) const;
 };

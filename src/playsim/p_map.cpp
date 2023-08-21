@@ -92,6 +92,7 @@
 #include "r_sky.h"
 #include "g_levellocals.h"
 #include "actorinlines.h"
+#include <shadowinlines.h>
 
 CVAR(Bool, cl_bloodsplats, true, CVAR_ARCHIVE)
 CVAR(Int, sv_smartaim, 0, CVAR_ARCHIVE | CVAR_SERVERINFO)
@@ -111,6 +112,20 @@ static FRandom pr_crunch("DoCrunch");
 TArray<spechit_t> spechit;
 TArray<spechit_t> portalhit;
 
+//==========================================================================
+//
+// P_ShouldPassThroughPlayer
+// Allows players to walk through and shoot through each other (useful in
+// multiplayer)
+//
+//==========================================================================
+
+bool P_ShouldPassThroughPlayer(AActor *self, AActor *other)
+{
+  return (dmflags3 & DF3_NO_PLAYER_CLIP) &&
+          other->player && other->player->mo == other &&
+          self->IsFriend(other);
+}
 
 //==========================================================================
 //
@@ -151,6 +166,38 @@ bool P_CanCollideWith(AActor *tmthing, AActor *thing)
 	{
 		VMCall(func, params, 3, &ret, 1);
 		if (!retval) return false;
+	}
+	return true;
+}
+
+//==========================================================================
+// 
+// CanCrossLine
+//
+// Checks if an actor can cross a line after all checks are processed.
+// If false, the line blocks them.
+//==========================================================================
+
+bool P_CanCrossLine(AActor *mo, line_t *line, DVector3 next)
+{
+	static unsigned VIndex = ~0u;
+	if (VIndex == ~0u)
+	{
+		VIndex = GetVirtualIndex(RUNTIME_CLASS(AActor), "CanCrossLine");
+		assert(VIndex != ~0u);
+	}
+
+	VMValue params[] = { mo, line, next.X, next.Y, next.Z, false };
+	VMReturn ret;
+	int retval;
+	ret.IntAt(&retval);
+
+	auto clss = mo->GetClass();
+	VMFunction *func = clss->Virtuals.Size() > VIndex ? clss->Virtuals[VIndex] : nullptr;
+	if (func != nullptr)
+	{
+		VMCall(func, params, countof(params), &ret, 1);
+		return retval;
 	}
 	return true;
 }
@@ -480,6 +527,9 @@ bool	P_TeleportMove(AActor* thing, const DVector3 &pos, bool telefrag, bool modi
 		if ((thing->IsKindOf(NAME_Inventory) || (thing->flags2 & MF2_TELESTOMP)) && !(thing->flags & MF_SOLID) && ((th->flags3 & MF3_ISMONSTER) || th->player != nullptr))
 			continue;
 
+		if (tmf.thing->player && P_ShouldPassThroughPlayer(tmf.thing, th))
+			continue;
+
 		// monsters don't stomp things except on boss level
 		// [RH] Some Heretic/Hexen monsters can telestomp
 		// ... and some items can never be telefragged while others will be telefragged by everything that teleports upon them.
@@ -490,6 +540,7 @@ bool	P_TeleportMove(AActor* thing, const DVector3 &pos, bool telefrag, bool modi
 				P_DamageMobj(th, thing, thing, TELEFRAG_DAMAGE, NAME_Telefrag, DMG_THRUSTLESS);
 			continue;
 		}
+
 		return false;
 	}
 
@@ -953,6 +1004,13 @@ bool PIT_CheckLine(FMultiBlockLinesIterator &mit, FMultiBlockLinesIterator::Chec
 		}
 	}
 
+	if ((tm.thing->flags8 & MF8_CROSSLINECHECK) && !P_CanCrossLine(tm.thing, ld, tm.pos))
+	{
+		if (wasfit)
+			tm.thing->BlockingLine = ld;
+		
+		return false;
+	}
 	// If the floor planes on both sides match we should recalculate open.bottom at the actual position we are checking
 	// This is to avoid bumpy movement when crossing a linedef with the same slope on both sides.
 	// This should never narrow down the opening, though, only widen it.
@@ -1332,6 +1390,9 @@ bool PIT_CheckThing(FMultiBlockThingsIterator &it, FMultiBlockThingsIterator::Ch
 	if ((tm.thing->flags6 & MF6_THRUSPECIES) && (tm.thing->GetSpecies() == thing->GetSpecies()))
 		return true;
 
+	if (tm.thing->player && P_ShouldPassThroughPlayer(tm.thing, thing))
+		return true;
+
 	tm.thing->BlockingMobj = thing;
 	topz = thing->Top();
 
@@ -1519,6 +1580,12 @@ bool PIT_CheckThing(FMultiBlockThingsIterator &it, FMultiBlockThingsIterator::Ch
 			return true;
 		}
 
+		if (tm.thing->target && tm.thing->target != thing &&
+			tm.thing->target->player && P_ShouldPassThroughPlayer(tm.thing->target, thing))
+		{
+			return true;
+		}
+
 		double clipheight;
 
 		if (thing->projectilepassheight > 0)
@@ -1645,6 +1712,7 @@ bool PIT_CheckThing(FMultiBlockThingsIterator &it, FMultiBlockThingsIterator::Ch
 	{ // Push thing
 		if (thing->lastpush != tm.PushTime)
 		{
+			thing->PlayPushSound();
 			thing->Vel += tm.thing->Vel.XY() * thing->pushfactor;
 			thing->lastpush = tm.PushTime;
 		}
@@ -1993,7 +2061,7 @@ int P_TestMobjZ(AActor *actor, bool quick, AActor **pOnmobj)
 {
 	AActor *onmobj = nullptr;
 	if (pOnmobj) *pOnmobj = nullptr;
-	if (actor->flags & MF_NOCLIP)
+	if ((actor->flags & MF_NOCLIP) || (actor->flags2 & MF2_THRUACTORS))
 	{
 		return true;
 	}
@@ -2011,7 +2079,7 @@ int P_TestMobjZ(AActor *actor, bool quick, AActor **pOnmobj)
 		{
 			continue;
 		}
-		if ((actor->flags2 | thing->flags2) & MF2_THRUACTORS)
+		if (thing->flags2 & MF2_THRUACTORS)
 		{
 			continue;
 		}
@@ -2064,7 +2132,10 @@ int P_TestMobjZ(AActor *actor, bool quick, AActor **pOnmobj)
 		{ // If they cannot collide, they cannot block each other.
 			continue;
 		}
-
+		if (actor->player && P_ShouldPassThroughPlayer(actor, thing))
+		{
+			continue;
+		}
 
 		onmobj = thing;
 		if (quick) break;
@@ -2102,7 +2173,7 @@ void P_FakeZMovement(AActor *mo)
 	}
 	if (mo->player && mo->flags&MF_NOGRAVITY && (mo->Z() > mo->floorz) && !mo->IsNoClip2())
 	{
-		mo->AddZ(DAngle(4.5 * mo->Level->maptime).Sin());
+		mo->AddZ(DAngle::fromDeg(4.5 * mo->Level->maptime).Sin());
 	}
 
 	//
@@ -2440,8 +2511,8 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 	while (true)
 	{
 		double bestfrac = 1.1;
-		spechit_t besthit;
-		int besthitnum;
+		spechit_t besthit{};
+		int besthitnum = -1;
 		// find the portal nearest to the crossing actor
 		for (unsigned i = 0; i < portalhit.Size();i++)
 		{
@@ -2516,7 +2587,7 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 			if (thing->Level->isCamera(thing))
 			{
 				divline_t dl1 = { besthit.Oldrefpos.X,besthit.Oldrefpos.Y, besthit.Refpos.X - besthit.Oldrefpos.X, besthit.Refpos.Y - besthit.Oldrefpos.Y };
-				DVector3a hit = { {dl1.x + dl1.dx * bestfrac, dl1.y + dl1.dy * bestfrac, 0.},0. };
+				DVector3a hit = { {dl1.x + dl1.dx * bestfrac, dl1.y + dl1.dy * bestfrac, 0.},nullAngle };
 
 				R_AddInterpolationPoint(hit);
 				if (port->mType == PORTT_LINKED)
@@ -2922,16 +2993,16 @@ void FSlide::HitSlideLine(line_t* ld)
 	lineangle = ld->Delta().Angle();
 
 	if (side == 1)
-		lineangle += 180.;
+		lineangle += DAngle::fromDeg(180.);
 
 	moveangle = tmmove.Angle();
 
 	// prevents sudden path reversal due to rounding error |	// phares
-	moveangle += 3600/65536.*65536.;		// Boom added 10 to the angle here.
+	moveangle += DAngle::fromDeg(3600/65536.*65536.);		// Boom added 10 to the angle here.
 	
 	deltaangle = ::deltaangle(lineangle, moveangle);								//   V
 	movelen = tmmove.Length();
-	if (icyfloor && (deltaangle > 45) && (deltaangle < 135))
+	if (icyfloor && (deltaangle > DAngle::fromDeg(45)) && (deltaangle < DAngle::fromDeg(135)))
 	{
 		moveangle = ::deltaangle(deltaangle, lineangle);
 		movelen /= 2; // absorb
@@ -3447,9 +3518,19 @@ bool FSlide::BounceWall(AActor *mo)
 	}
 	line = bestslideline;
 
+	if (mo->flags & MF_MISSILE)
+	{
+		switch (mo->SpecialBounceHit(nullptr, line, nullptr))
+		{
+			case 1:		return true;
+			case 0:		return false;
+			default:	break;
+		}
+	}
+
 	if (line->special == Line_Horizon || ((mo->BounceFlags & BOUNCE_NotOnSky) && line->hitSkyWall(mo)))
 	{
-		mo->SeeSound = mo->BounceSound = 0;	// it might make a sound otherwise
+		mo->SeeSound = mo->BounceSound = NO_SOUND;	// it might make a sound otherwise
 		mo->Destroy();
 		return true;
 	}
@@ -3480,7 +3561,7 @@ bool FSlide::BounceWall(AActor *mo)
 	lineangle = line->Delta().Angle();
 	if (side == 1)
 	{
-		lineangle += 180;
+		lineangle += DAngle::fromDeg(180);
 	}
 	moveangle = mo->Vel.Angle();
 	deltaangle = (lineangle * 2) - moveangle;
@@ -3537,6 +3618,13 @@ bool P_BounceActor(AActor *mo, AActor *BlockingMobj, bool ontop)
 			case 0:		return false;
 			default:	break;
 		}
+
+		switch (mo->SpecialBounceHit(BlockingMobj, nullptr, nullptr))
+		{
+			case 1:		return true;
+			case 0:		return false;
+			default:	break;
+		}
 	}
 
 	//Don't go through all of this if the actor is reflective and wants things to pass through them.
@@ -3572,7 +3660,7 @@ bool P_BounceActor(AActor *mo, AActor *BlockingMobj, bool ontop)
 
 		if (!ontop)
 		{
-			DAngle angle = BlockingMobj->AngleTo(mo) + ((pr_bounce() % 16) - 8);
+			DAngle angle = BlockingMobj->AngleTo(mo) + DAngle::fromDeg((pr_bounce() % 16) - 8);
 			double speed = mo->VelXYToSpeed() * GetWallBounceFactor(mo); // [GZ] was 0.75, using wallbouncefactor seems more consistent
 			if (fabs(speed) < EQUAL_EPSILON) speed = 0;
 			mo->Angles.Yaw = angle;
@@ -3634,6 +3722,48 @@ bool P_BounceActor(AActor *mo, AActor *BlockingMobj, bool ontop)
 		return true;
 	}
 	return false;
+}
+
+bool P_ReflectOffActor(AActor* mo, AActor* blocking)
+{
+	if (!(blocking->flags2 & MF2_REFLECTIVE))
+		return false;
+
+	// Don't change the angle if there's THRUREFLECT on the monster.
+	if (!(blocking->flags7 & MF7_THRUREFLECT))
+	{
+		DAngle angle = blocking->AngleTo(mo);
+		if (mo->AdjustReflectionAngle(blocking, angle))
+			return false;
+
+		// Change angle for deflection/reflection
+		auto target = mo->target != NULL ? mo->target : blocking->target;
+		if (target && (blocking->flags7 & MF7_AIMREFLECT))
+		{
+			//dest->x - source->x
+			DVector3 vect = mo->Vec3To(target);
+			vect.Z += target->Height * 0.5;
+			mo->Vel = vect.Resized(mo->Speed);
+		}
+		else if (blocking->flags7 & MF7_MIRRORREFLECT)
+		{
+			mo->Angles.Yaw += DAngle::fromDeg(180.0);
+			mo->Vel *= -0.5;
+		}
+		else
+		{
+			mo->Angles.Yaw = angle;
+			mo->VelFromAngle(mo->Speed * 0.5);
+			mo->Vel.Z *= -0.5;
+		}
+	}
+	
+	if (mo->flags2 & MF2_SEEKERMISSILE)
+		mo->tracer = mo->target;
+
+	mo->target = blocking;
+
+	return true;
 }
 
 //============================================================================
@@ -4011,8 +4141,8 @@ struct aim_t
 		lastfloorplane = lastceilingplane = NULL;
 
 		// check the initial sector for 3D-floors and portals
-		bool ceilingportalstate = (aimdir & aim_t::aim_up) && toppitch < 0 && !lastsector->PortalBlocksMovement(sector_t::ceiling);
-		bool floorportalstate = (aimdir & aim_t::aim_down) && bottompitch > 0 && !lastsector->PortalBlocksMovement(sector_t::floor);
+		bool ceilingportalstate = (aimdir & aim_t::aim_up) && toppitch < nullAngle && !lastsector->PortalBlocksMovement(sector_t::ceiling);
+		bool floorportalstate = (aimdir & aim_t::aim_down) && bottompitch > nullAngle && !lastsector->PortalBlocksMovement(sector_t::floor);
 
 		for (auto rover : lastsector->e->XFloor.ffloors)
 		{
@@ -4035,8 +4165,8 @@ struct aim_t
 				floorportalstate = false;
 			}
 		}
-		if (ceilingportalstate) EnterSectorPortal(sector_t::ceiling, 0, lastsector, toppitch, min<DAngle>(0., bottompitch));
-		if (floorportalstate) EnterSectorPortal(sector_t::floor, 0, lastsector, max<DAngle>(0., toppitch), bottompitch);
+		if (ceilingportalstate) EnterSectorPortal(sector_t::ceiling, 0, lastsector, toppitch, min<DAngle>(nullAngle, bottompitch));
+		if (floorportalstate) EnterSectorPortal(sector_t::floor, 0, lastsector, max<DAngle>(nullAngle, toppitch), bottompitch);
 
 		FPathTraverse it(lastsector->Level, startpos.X, startpos.Y, aimtrace.X, aimtrace.Y, PT_ADDLINES | PT_ADDTHINGS | PT_COMPATIBLE | PT_DELTA, startfrac);
 		intercept_t *in;
@@ -4062,7 +4192,7 @@ struct aim_t
 				int frontflag = P_PointOnLineSidePrecise(startpos, li);
 
 				if (aimdebug)
-					Printf("Found line %d: toppitch = %f, bottompitch = %f\n", li->Index(), toppitch.Degrees, bottompitch.Degrees);
+					Printf("Found line %d: toppitch = %f, bottompitch = %f\n", li->Index(), toppitch.Degrees(), bottompitch.Degrees());
 
 				if (li->isLinePortal() && frontflag == 0)
 				{
@@ -4106,19 +4236,19 @@ struct aim_t
 					return;
 
 				if (aimdebug)
-					Printf("After line %d: toppitch = %f, bottompitch = %f, planestocheck = %d\n", li->Index(), toppitch.Degrees, bottompitch.Degrees, planestocheck);
+					Printf("After line %d: toppitch = %f, bottompitch = %f, planestocheck = %d\n", li->Index(), toppitch.Degrees(), bottompitch.Degrees(), planestocheck);
 
 				sector_t *entersec = frontflag ? li->frontsector : li->backsector;
 				sector_t *exitsec = frontflag ? li->backsector : li->frontsector;
 				lastsector = entersec;
 				// check portal in backsector when aiming up/downward is possible, the line doesn't have portals on both sides and there's actually a portal in the backsector
-				if ((planestocheck & aim_up) && toppitch < 0 && open.top != LINEOPEN_MAX && !entersec->PortalBlocksMovement(sector_t::ceiling))
+				if ((planestocheck & aim_up) && toppitch < nullAngle && open.top != LINEOPEN_MAX && !entersec->PortalBlocksMovement(sector_t::ceiling))
 				{
-					EnterSectorPortal(sector_t::ceiling, in->frac, entersec, toppitch, min<DAngle>(0., bottompitch));
+					EnterSectorPortal(sector_t::ceiling, in->frac, entersec, toppitch, min<DAngle>(nullAngle, bottompitch));
 				}
-				if ((planestocheck & aim_down) && bottompitch > 0 && open.bottom != LINEOPEN_MIN && !entersec->PortalBlocksMovement(sector_t::floor))
+				if ((planestocheck & aim_down) && bottompitch > nullAngle && open.bottom != LINEOPEN_MIN && !entersec->PortalBlocksMovement(sector_t::floor))
 				{
-					EnterSectorPortal(sector_t::floor, in->frac, entersec, max<DAngle>(0., toppitch), bottompitch);
+					EnterSectorPortal(sector_t::floor, in->frac, entersec, max<DAngle>(nullAngle, toppitch), bottompitch);
 				}
 				continue;					// shot continues
 			}
@@ -4130,6 +4260,9 @@ struct aim_t
 
 			if (aimtarget != NULL && th != aimtarget)
 				continue;					// only care about target, and you're not it
+
+			if (shootthing->player && P_ShouldPassThroughPlayer(shootthing, th))
+				continue;
 
 			// If we want to start a conversation anything that has one should be
 			// found, regardless of other settings.
@@ -4153,7 +4286,7 @@ struct aim_t
 			dist = attackrange * in->frac;
 
 			// Don't autoaim certain special actors
-			if (!cl_doautoaim && th->flags6 & MF6_NOTAUTOAIMED)
+			if (!cl_doautoaim && !(flags & ALF_IGNORENOAUTOAIM) && th->flags6 & MF6_NOTAUTOAIMED)
 			{
 				continue;
 			}
@@ -4328,11 +4461,11 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 	double shootz = t1->Center() - t1->Floorclip + t1->AttackOffset();
 
 	// can't shoot outside view angles
-	if (vrange == 0)
+	if (vrange == nullAngle)
 	{
 		if (t1->player == NULL || !t1->Level->IsFreelookAllowed())
 		{
-			vrange = 35.;
+			vrange = DAngle::fromDeg(35.);
 		}
 		else
 		{
@@ -4340,7 +4473,7 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 			auto weapon = t1->player->ReadyWeapon;
 			if ((weapon && (weapon->IntVar(NAME_WeaponFlags) & WIF_NOAUTOAIM)) && !(flags & ALF_NOWEAPONCHECK))
 			{
-				vrange = 0.5;
+				vrange = DAngle::fromDeg(0.5);
 			}
 			else
 			{
@@ -4348,7 +4481,7 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 				// vrange of 0 degrees, because then toppitch and bottompitch will
 				// be equal, and PTR_AimTraverse will never find anything to shoot at
 				// if it crosses a line.
-				vrange = clamp(t1->player->userinfo.GetAimDist(), 0.5, 35.);
+				vrange = DAngle::fromDeg(clamp(t1->player->userinfo.GetAimDist(), 0.5, 35.));
 			}
 		}
 	}
@@ -4379,6 +4512,11 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 	{
 		*pLineTarget = *result;
 	}
+
+	DAngle newPitch = P_AimLineAttack_ShadowHandling(t1,target,result->linetarget,shootz);
+	if (newPitch != nullAngle)
+		result->pitch = newPitch;
+
 	return result->linetarget ? result->pitch : t1->Angles.Pitch;
 }
 
@@ -4416,18 +4554,19 @@ static ETraceStatus CheckForActor(FTraceResults &res, void *userdata)
 	// 3. MTHRUSPECIES on puff and the shooter has same species as the hit actor
 	// 4. THRUSPECIES on puff and the puff has same species as the hit actor
 	// 5. THRUGHOST on puff and the GHOST flag on the hit actor
+	// 6. Matching ThruBits
+	// 7. A player caller with no player clip enabled
 
 	if ((data->ThruActors) || 
 		(!(data->Spectral) && res.Actor->flags4 & MF4_SPECTRAL) ||
 		(data->MThruSpecies && res.Actor->GetSpecies() == data->Caller->GetSpecies()) ||
 		(data->ThruSpecies && res.Actor->GetSpecies() == data->PuffSpecies) ||
-		(data->hitGhosts && res.Actor->flags3 & MF3_GHOST))
+		(data->hitGhosts && res.Actor->flags3 & MF3_GHOST) ||
+		(data->UseThruBits && (data->ThruBits & res.Actor->ThruBits)) ||
+		(data->Caller->player && P_ShouldPassThroughPlayer(data->Caller, res.Actor)))
 	{
 		return TRACE_Skip;
 	}
-
-	if (data->UseThruBits && (data->ThruBits & res.Actor->ThruBits))
-		return TRACE_Skip;
 
 	return TRACE_Stop;
 }
@@ -4573,7 +4712,7 @@ AActor *P_LineAttack(AActor *t1, DAngle angle, double distance,
 	if (!Trace(tempos, t1->Sector, direction, distance, MF_SHOOTABLE, 
 		ML_BLOCKEVERYTHING | ML_BLOCKHITSCAN, t1, trace, tflags, CheckForActor, &TData))
 	{ // hit nothing
-		if (!nointeract && puffDefaults && puffDefaults->ActiveSound)
+		if (!nointeract && puffDefaults && puffDefaults->ActiveSound.isvalid())
 		{ // Play miss sound
 			S_Sound(t1, CHAN_WEAPON, 0, puffDefaults->ActiveSound, 1, ATTN_NORM);
 		}
@@ -4614,7 +4753,7 @@ AActor *P_LineAttack(AActor *t1, DAngle angle, double distance,
 			{
 				DVector2 pos = t1->Level->GetPortalOffsetPosition(trace.HitPos.X, trace.HitPos.Y, -trace.HitVector.X * 4, -trace.HitVector.Y * 4);
 				puff = P_SpawnPuff(t1, pufftype, DVector3(pos, trace.HitPos.Z - trace.HitVector.Z * 4), trace.SrcAngleFromTarget,
-					trace.SrcAngleFromTarget - 90, 0, puffFlags);
+					trace.SrcAngleFromTarget - DAngle::fromDeg(90), 0, puffFlags);
 				puff->radius = 1/65536.;
 
 				if (nointeract)
@@ -4678,7 +4817,7 @@ AActor *P_LineAttack(AActor *t1, DAngle angle, double distance,
 					puffFlags |= PF_HITTHINGBLEED;
 
 				// We must pass the unreplaced puff type here 
-				puff = P_SpawnPuff(t1, pufftype, bleedpos, trace.SrcAngleFromTarget, trace.SrcAngleFromTarget - 90, 2, puffFlags | PF_HITTHING, trace.Actor);
+				puff = P_SpawnPuff(t1, pufftype, bleedpos, trace.SrcAngleFromTarget, trace.SrcAngleFromTarget - DAngle::fromDeg(90), 2, puffFlags | PF_HITTHING, trace.Actor);
 			}
 			if (victim != NULL)
 			{
@@ -4716,7 +4855,7 @@ AActor *P_LineAttack(AActor *t1, DAngle angle, double distance,
 				{
 					// Since the puff is the damage inflictor we need it here 
 					// regardless of whether it is displayed or not.
-					puff = P_SpawnPuff(t1, pufftype, bleedpos, 0., 0., 2, puffFlags | PF_HITTHING | PF_TEMPORARY);
+					puff = P_SpawnPuff(t1, pufftype, bleedpos, nullAngle, nullAngle, 2, puffFlags | PF_HITTHING | PF_TEMPORARY);
 					killPuff = true;
 				}
 				auto src = t1;
@@ -4731,7 +4870,7 @@ AActor *P_LineAttack(AActor *t1, DAngle angle, double distance,
 			{
 				IFVIRTUALPTR(trace.Actor, AActor, SpawnLineAttackBlood)
 				{
-					VMValue params[] = { trace.Actor, t1, bleedpos.X, bleedpos.Y, bleedpos.Z, trace.SrcAngleFromTarget.Degrees, damage, newdam };
+					VMValue params[] = { trace.Actor, t1, bleedpos.X, bleedpos.Y, bleedpos.Z, trace.SrcAngleFromTarget.Degrees(), damage, newdam };
 					VMCall(func, params, countof(params), nullptr, 0);
 				}
 				if (damage)
@@ -4746,7 +4885,7 @@ AActor *P_LineAttack(AActor *t1, DAngle angle, double distance,
 		{
 			if (puff == NULL)
 			{ // Spawn puff just to get a mass for the splash
-				puff = P_SpawnPuff(t1, pufftype, trace.HitPos, 0., 0., 2, puffFlags | PF_HITTHING | PF_TEMPORARY);
+				puff = P_SpawnPuff(t1, pufftype, trace.HitPos, nullAngle, nullAngle, 2, puffFlags | PF_HITTHING | PF_TEMPORARY);
 				killPuff = true;
 			}
 			SpawnDeepSplash(t1, trace, puff);
@@ -4767,10 +4906,7 @@ AActor *P_LineAttack(AActor *t1, DAngle angle, double distance,
 	PClassActor *type = PClass::FindActor(pufftype);
 	if (type == NULL)
 	{
-		if (victim != NULL)
-		{
-			memset(victim, 0, sizeof(*victim));
-		}
+		if (victim != NULL) *victim = {};
 		Printf("Attempt to spawn unknown actor type '%s'\n", pufftype.GetChars());
 		return NULL;
 	}
@@ -5009,8 +5145,8 @@ void P_TraceBleed(int damage, const DVector3 &pos, AActor *actor, DAngle angle, 
 	{
 		FTraceResults bleedtrace;
 
-		DAngle bleedang = angle + (pr_tracebleed() - 128) * noise;
-		DAngle bleedpitch = pitch + (pr_tracebleed() - 128) * noise;
+		DAngle bleedang = angle + DAngle::fromDeg((pr_tracebleed() - 128) * noise);
+		DAngle bleedpitch = pitch + DAngle::fromDeg((pr_tracebleed() - 128) * noise);
 		double cosp = bleedpitch.Cos();
 		DVector3 vdir = DVector3(cosp * bleedang.Cos(), cosp * bleedang.Sin(), -bleedpitch.Sin());
 
@@ -5062,11 +5198,11 @@ void P_TraceBleed(int damage, AActor *target, AActor *missile)
 		double aim;
 
 		aim = g_atan(missile->Vel.Z / target->Distance2D(missile));
-		pitch = -DAngle::ToDegrees(aim);
+		pitch = -DAngle::fromRad(aim);
 	}
 	else
 	{
-		pitch = 0.;
+		pitch = nullAngle;
 	}
 	P_TraceBleed(damage, target->PosPlusZ(target->Height/2), target, missile->AngleTo(target), pitch);
 }
@@ -5084,7 +5220,7 @@ void P_TraceBleed(int damage, FTranslatedLineTarget *t, AActor *puff)
 		return;
 	}
 
-	DAngle pitch = (pr_tracebleed() - 128) * (360 / 65536.);
+	DAngle pitch = DAngle::fromDeg((pr_tracebleed() - 128) * (360 / 65536.));
 	P_TraceBleed(damage, t->linetarget->PosPlusZ(t->linetarget->Height/2), t->linetarget, t->angleFromSource, pitch);
 }
 
@@ -5099,8 +5235,8 @@ void P_TraceBleed(int damage, AActor *target)
 {
 	if (target != NULL)
 	{
-		DAngle angle = pr_tracebleed() * (360 / 256.);
-		DAngle pitch = (pr_tracebleed() - 128) * (360 / 65536.);
+		DAngle angle = DAngle::fromDeg(pr_tracebleed() * (360 / 256.));
+		DAngle pitch = DAngle::fromDeg((pr_tracebleed() - 128) * (360 / 65536.));
 		P_TraceBleed(damage, target->PosPlusZ(target->Height / 2), target, angle, pitch);
 	}
 }
@@ -5158,12 +5294,14 @@ static ETraceStatus ProcessRailHit(FTraceResults &res, void *userdata)
 	// 2. MTHRUSPECIES on puff and the shooter has same species as the hit actor
 	// 3. THRUSPECIES on puff and the puff has same species as the hit actor
 	// 4. THRUGHOST on puff and the GHOST flag on the hit actor
+	// 5. Skip through players in coop if sv_noplayerclip is enabled
 
 	if ((data->ThruActors) ||
 		(data->UseThruBits && (data->ThruBits & res.Actor->ThruBits)) ||
 		(data->MThruSpecies && res.Actor->GetSpecies() == data->Caller->GetSpecies()) ||
 		(data->ThruSpecies && res.Actor->GetSpecies() == data->PuffSpecies) ||
-		(data->ThruGhosts && res.Actor->flags3 & MF3_GHOST))
+		(data->ThruGhosts && res.Actor->flags3 & MF3_GHOST) ||
+		(data->Caller->player && P_ShouldPassThroughPlayer(data->Caller, res.Actor)))
 	{
 		return TRACE_Skip;
 	}
@@ -5230,7 +5368,7 @@ void P_RailAttack(FRailParams *p)
 		puffflags |= PF_NORANDOMZ;
 	}
 
-	DVector2 xy = source->Vec2Angle(p->offset_xy, angle - 90.);
+	DVector2 xy = source->Vec2Angle(p->offset_xy, angle - DAngle::fromDeg(90.));
 
 	RailData rail_data;
 	rail_data.Caller = source;
@@ -5293,6 +5431,7 @@ void P_RailAttack(FRailParams *p)
 
 		int actorpuffflags = puffflags | PF_HITTHING;
 		AActor *hitactor = rail_data.RailHits[i].HitActor;
+		AActor *hitpuff = NULL;
 		DVector3 &hitpos = rail_data.RailHits[i].HitPos;
 		DAngle hitangle = rail_data.RailHits[i].HitAngle;
 
@@ -5312,21 +5451,25 @@ void P_RailAttack(FRailParams *p)
 		}
 		if (spawnpuff)
 		{
-			P_SpawnPuff(source, puffclass, hitpos, hitangle, hitangle - 90, 1, actorpuffflags, hitactor);
+			hitpuff = P_SpawnPuff(source, puffclass, hitpos, hitangle, hitangle - DAngle::fromDeg(90), 1, actorpuffflags, hitactor);
 		}
-		
+		// https://github.com/coelckers/gzdoom/pull/1668#pullrequestreview-1039431156
+		if (!hitpuff) {
+			hitpuff = thepuff;
+		}
+
 		int dmgFlagPass = DMG_INFLICTOR_IS_PUFF;
 		if (puffDefaults != NULL)	// is this even possible?
 		{
 			if (puffDefaults->PoisonDamage > 0 && puffDefaults->PoisonDuration != INT_MIN)
 			{
-				P_PoisonMobj(hitactor, thepuff ? thepuff : source, source, puffDefaults->PoisonDamage, puffDefaults->PoisonDuration, puffDefaults->PoisonPeriod, puffDefaults->PoisonDamageType);
+				P_PoisonMobj(hitactor, hitpuff ? hitpuff : source, source, puffDefaults->PoisonDamage, puffDefaults->PoisonDuration, puffDefaults->PoisonPeriod, puffDefaults->PoisonDamageType);
 			}
 			if (puffDefaults->flags3 & MF3_FOILINVUL) dmgFlagPass |= DMG_FOILINVUL;
 			if (puffDefaults->flags7 & MF7_FOILBUDDHA) dmgFlagPass |= DMG_FOILBUDDHA;
 		}
 		// [RK] If the attack source is a player, send the DMG_PLAYERATTACK flag.
-		int newdam = P_DamageMobj(hitactor, thepuff ? thepuff : source, source, p->damage, damagetype, dmgFlagPass | DMG_USEANGLE | (source->player ? DMG_PLAYERATTACK : 0), hitangle);
+		int newdam = P_DamageMobj(hitactor, hitpuff ? hitpuff : source, source, p->damage, damagetype, dmgFlagPass | DMG_USEANGLE | (source->player ? DMG_PLAYERATTACK : 0), hitangle);
 
 		if (bleed)
 		{
@@ -5344,7 +5487,7 @@ void P_RailAttack(FRailParams *p)
 
 		if (puffclass != NULL && puffDefaults->flags3 & MF3_ALWAYSPUFF)
 		{
-			puff = P_SpawnPuff(source, puffclass, trace.HitPos, trace.SrcAngleFromTarget, trace.SrcAngleFromTarget - 90, 1, puffflags);
+			puff = P_SpawnPuff(source, puffclass, trace.HitPos, trace.SrcAngleFromTarget, trace.SrcAngleFromTarget - DAngle::fromDeg(90), 1, puffflags);
 			if (puff && (trace.Line != NULL) && (trace.Line->special == Line_Horizon) && !(puff->flags3 & MF3_SKYEXPLODE))
 				puff->Destroy();
 		}
@@ -5359,7 +5502,7 @@ void P_RailAttack(FRailParams *p)
 		AActor* puff = NULL;
 		if (puffclass != NULL && puffDefaults->flags3 & MF3_ALWAYSPUFF)
 		{
-			puff = P_SpawnPuff(source, puffclass, trace.HitPos, trace.SrcAngleFromTarget, trace.SrcAngleFromTarget - 90, 1, puffflags);
+			puff = P_SpawnPuff(source, puffclass, trace.HitPos, trace.SrcAngleFromTarget, trace.SrcAngleFromTarget - DAngle::fromDeg(90), 1, puffflags);
 			if (puff && !(puff->flags3 & MF3_SKYEXPLODE) &&
 				(((trace.HitType == TRACE_HitFloor) && (puff->floorpic == skyflatnum)) ||
 				((trace.HitType == TRACE_HitCeiling) && (puff->ceilingpic == skyflatnum))))
@@ -5397,7 +5540,7 @@ CVAR(Float, chase_dist, 90.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 void P_AimCamera(AActor *t1, DVector3 &campos, DAngle &camangle, sector_t *&CameraSector, bool &unlinked)
 {
 	double distance = clamp<double>(chase_dist, 0, 30000);
-	DAngle angle = t1->Angles.Yaw - 180;
+	DAngle angle = t1->Angles.Yaw - DAngle::fromDeg(180);
 	DAngle pitch = t1->Angles.Pitch;
 	FTraceResults trace;
 	DVector3 vvec;
@@ -5420,9 +5563,30 @@ void P_AimCamera(AActor *t1, DVector3 &campos, DAngle &camangle, sector_t *&Came
 	}
 	CameraSector = trace.Sector;
 	unlinked = trace.unlinked;
-	camangle = trace.SrcAngleFromTarget - 180.;
+	camangle = trace.SrcAngleFromTarget - DAngle::fromDeg(180.);
 }
 
+// [MC] Used for ViewPos. Uses code borrowed from P_AimCamera.
+void P_AdjustViewPos(AActor *t1, DVector3 orig, DVector3 &campos, sector_t *&CameraSector, bool &unlinked, DViewPosition *VP)
+{
+	FTraceResults trace;
+	const DVector3 vvec = campos - orig;
+	const double distance = vvec.Length();
+
+	// Trace handles all of the portal crossing, which is why there is no usage of Vec#Offset(Z).
+	if (Trace(orig, t1->Sector, vvec.Unit(), distance, 0, 0, t1, trace) &&
+		trace.Distance > 5)
+	{
+		// Position camera slightly in front of hit thing
+		campos = orig + vvec.Unit() * (trace.Distance - 5);
+	}
+	else
+	{
+		campos = trace.HitPos - trace.HitVector * 1 / 256.;
+	}
+	CameraSector = trace.Sector;
+	unlinked = trace.unlinked;
+}
 
 //==========================================================================
 //
@@ -5440,7 +5604,7 @@ bool P_TalkFacing(AActor *player)
 
 	for (double angle : angleofs)
 	{
-		P_AimLineAttack(player, player->Angles.Yaw + angle, TALKRANGE, &t, 35., ALF_FORCENOSMART | ALF_CHECKCONVERSATION | ALF_PORTALRESTRICT);
+		P_AimLineAttack(player, player->Angles.Yaw + DAngle::fromDeg(angle), TALKRANGE, &t, DAngle::fromDeg(35.), ALF_FORCENOSMART | ALF_CHECKCONVERSATION | ALF_PORTALRESTRICT);
 		if (t.linetarget != NULL)
 		{
 			if (t.linetarget->health > 0 && // Dead things can't talk.
@@ -5739,7 +5903,7 @@ int P_UsePuzzleItem(AActor *PuzzleItemUser, int PuzzleItemType)
 //==========================================================================
 //
 // RADIUS ATTACK
-//
+// Most of the explosion code resides here. Except P_GeometryRadiusAttack().
 //
 //==========================================================================
 
@@ -5765,7 +5929,7 @@ CUSTOM_CVAR(Float, splashfactor, 1.f, CVAR_SERVERINFO)
 // Used by anything without OLDRADIUSDMG flag
 //==========================================================================
 
-static double GetRadiusDamage(bool fromaction, AActor *bombspot, AActor *thing, int bombdamage, int bombdistance, int fulldamagedistance, bool thingbombsource)
+static double GetRadiusDamage(bool fromaction, AActor *bombspot, AActor *thing, int bombdamage, int bombdistance, int fulldamagedistance, bool thingbombsource, bool round)
 {
 	// [RH] New code. The bounding box only covers the
 	// height of the thing and not the height of the map.
@@ -5777,41 +5941,49 @@ static double GetRadiusDamage(bool fromaction, AActor *bombspot, AActor *thing, 
 	double bombdistancefloat = 1. / (double)(bombdistance - fulldamagedistance);
 	double bombdamagefloat = (double)bombdamage;
 
-	DVector2 vec = bombspot->Vec2To(thing);
-	dx = fabs(vec.X);
-	dy = fabs(vec.Y);
-	boxradius = thing->radius;
-
-	// The damage pattern is square, not circular.
-	len = double(dx > dy ? dx : dy);
-
-	if (bombspot->Z() < thing->Z() || bombspot->Z() >= thing->Top())
+	if (!round)
 	{
-		double dz;
+		DVector2 vec = bombspot->Vec2To(thing);
+		dx = fabs(vec.X);
+		dy = fabs(vec.Y);
+		boxradius = thing->radius;
 
-		if (bombspot->Z() > thing->Z())
+		// The damage pattern is square, not circular.
+		len = double(dx > dy ? dx : dy);
+
+		if (bombspot->Z() < thing->Z() || bombspot->Z() >= thing->Top())
 		{
-			dz = double(bombspot->Z() - thing->Top());
-		}
-		else
-		{
-			dz = double(thing->Z() - bombspot->Z());
-		}
-		if (len <= boxradius)
-		{
-			len = dz;
+			double dz;
+
+			if (bombspot->Z() > thing->Z())
+			{
+				dz = double(bombspot->Z() - thing->Top());
+			}
+			else
+			{
+				dz = double(thing->Z() - bombspot->Z());
+			}
+			if (len <= boxradius)
+			{
+				len = dz;
+			}
+			else
+			{
+				len -= boxradius;
+				len = g_sqrt(len*len + dz*dz);
+			}
 		}
 		else
 		{
 			len -= boxradius;
-			len = g_sqrt(len*len + dz*dz);
+			if (len < 0.f)
+				len = 0.f;
 		}
 	}
+	//[inkoalwetrust]: Round explosions just use the actual distance between the source and victim.
 	else
 	{
-		len -= boxradius;
-		if (len < 0.f)
-			len = 0.f;
+		len = bombspot->Distance3D (thing);
 	}
 	len = clamp<double>(len - (double)fulldamagedistance, 0, len);
 	points = bombdamagefloat * (1. - len * bombdistancefloat);
@@ -5886,7 +6058,7 @@ static int GetOldRadiusDamage(bool fromaction, AActor *bombspot, AActor *thing, 
 // damage and not taking into account any damage reduction.
 //==========================================================================
 
-int P_GetRadiusDamage(AActor *self, AActor *thing, int damage, int distance, int fulldmgdistance, bool oldradiusdmg)
+int P_GetRadiusDamage(AActor *self, AActor *thing, int damage, int distance, int fulldmgdistance, bool oldradiusdmg, bool circular)
 {
 
 	if (!thing)
@@ -5906,7 +6078,7 @@ int P_GetRadiusDamage(AActor *self, AActor *thing, int damage, int distance, int
 
 	const int newdam = oldradiusdmg
 		? GetOldRadiusDamage(true, self, thing, damage, distance, fulldmgdistance)
-		: int(GetRadiusDamage(true, self, thing, damage, distance, fulldmgdistance, false));
+		: int(GetRadiusDamage(true, self, thing, damage, distance, fulldmgdistance, false, circular));
 
 	return newdam;
 }
@@ -5951,6 +6123,7 @@ int P_RadiusAttack(AActor *bombspot, AActor *bombsource, int bombdamage, int bom
 		if (thing->flags3 & MF3_NORADIUSDMG && !(bombspot->flags4 & MF4_FORCERADIUSDMG))
 			continue;
 
+		// allow rocket splash damage
 		if (!(flags & RADF_HURTSOURCE) && (thing == bombsource || thing == bombspot))
 		{ // don't damage the source of the explosion
 			continue;
@@ -5972,10 +6145,15 @@ int P_RadiusAttack(AActor *bombspot, AActor *bombsource, int bombdamage, int bom
 			)
 			)	continue;
 
-		if((species != NAME_None) && (thing->Species != species))
-		{
+		if ((species != NAME_None) && (thing->Species != species))
 			continue;
-		}
+
+		//[inkoalawetrust] Don't harm actors friendly to the explosions' source. But do harm the source.
+		if ((flags & RADF_NOALLIES) && bombsource->IsFriend(thing) && !(thing == bombsource || thing == bombspot))
+			continue;
+
+		if (bombsource && thing != bombsource && bombsource->player && P_ShouldPassThroughPlayer(bombsource, thing))
+			continue;
 
 		targets.Push(thing);
 	}
@@ -5989,7 +6167,7 @@ int P_RadiusAttack(AActor *bombspot, AActor *bombsource, int bombdamage, int bom
 		if ((flags & RADF_NODAMAGE) || (!((bombspot->flags5 | thing->flags5) & MF5_OLDRADIUSDMG) && 
 			!(flags & RADF_OLDRADIUSDAMAGE) && !(thing->Level->i_compatflags2 & COMPATF2_EXPLODE2)))
 		{
-			double points = GetRadiusDamage(false, bombspot, thing, bombdamage, bombdistance, fulldamagedistance, bombsource == thing);
+			double points = GetRadiusDamage(false, bombspot, thing, bombdamage, bombdistance, fulldamagedistance, bombsource == thing,!!(flags & RADF_CIRCULAR));
 			double check = int(points) * bombdamage;
 			// points and bombdamage should be the same sign (the double cast of 'points' is needed to prevent overflows and incorrect values slipping through.)
 			if ((check > 0 || (check == 0 && bombspot->flags7 & MF7_FORCEZERORADIUSDMG)) && P_CheckSight(thing, bombspot, SF_IGNOREVISIBILITY | SF_IGNOREWATERBOUNDARY))
@@ -5998,15 +6176,22 @@ int P_RadiusAttack(AActor *bombspot, AActor *bombsource, int bombdamage, int bom
 				double thrust;
 				int damage = abs((int)points);
 				int newdam = damage;
+				int dmgmask = 0;
 
 				if (!(flags & RADF_NODAMAGE))
 				{
+					//[inkoalawetrust] Thrustless explosions don't push anything.
+					if (!(flags & RADF_THRUSTLESS))
+						dmgmask = DMG_EXPLOSION;
+					else
+						dmgmask = DMG_EXPLOSION | DMG_THRUSTLESS;
+
 					//[MC] Don't count actors saved by buddha if already at 1 health.
 					int prehealth = thing->health;
-					newdam = P_DamageMobj(thing, bombspot, bombsource, damage, bombmod, DMG_EXPLOSION);
+					newdam = P_DamageMobj(thing, bombspot, bombsource, damage, bombmod, dmgmask);
 					if (thing->health < prehealth)	count++;
 				}
-				else if (thing->player == NULL && (!(flags & RADF_NOIMPACTDAMAGE) && !(thing->flags7 & MF7_DONTTHRUST)))
+				else if (thing->player == NULL && (!(flags & RADF_NOIMPACTDAMAGE && !(flags & RADF_THRUSTLESS)) && !(thing->flags7 & MF7_DONTTHRUST)))
 					thing->flags2 |= MF2_BLASTED;
 
 				if (!(thing->flags & MF_ICECORPSE))
@@ -6014,13 +6199,12 @@ int P_RadiusAttack(AActor *bombspot, AActor *bombsource, int bombdamage, int bom
 					if (!(flags & RADF_NODAMAGE) && !(bombspot->flags3 & MF3_BLOODLESSIMPACT))
 						P_TraceBleed(newdam > 0 ? newdam : damage, thing, bombspot);
 
-					if ((flags & RADF_NODAMAGE) || !(bombspot->flags2 & MF2_NODMGTHRUST))
+					if ((flags & RADF_NODAMAGE && !(flags & RADF_THRUSTLESS)) || !(bombspot->flags2 & MF2_NODMGTHRUST) && !(flags & RADF_THRUSTLESS))
 					{
 						if (bombsource == NULL || !(bombsource->flags2 & MF2_NODMGTHRUST))
 						{
 							if (!(thing->flags7 & MF7_DONTTHRUST))
 							{
-							
 								thrust = points * 0.5 / (double)thing->Mass;
 								if (bombsource == thing)
 								{
@@ -6310,13 +6494,13 @@ void P_DoCrunch(AActor *thing, FChangePosition *cpos)
 					if (!(cl_bloodtype <= 1)) mo->renderflags |= RF_INVISIBLE;
 				}
 
-				DAngle an = (M_Random() - 128) * (360./256);
+				DAngle an = DAngle::fromDeg((M_Random() - 128) * (360./256));
 				if (cl_bloodtype >= 1)
 				{
 					P_DrawSplash2(thing->Level, 32,  thing->PosPlusZ(thing->Height/2), an, 2, thing->BloodColor);
 				}
 			}
-			if (thing->CrushPainSound != 0 && !S_GetSoundPlayingInfo(thing, thing->CrushPainSound))
+			if (thing->CrushPainSound != NO_SOUND && !S_GetSoundPlayingInfo(thing, thing->CrushPainSound))
 			{
 				S_Sound(thing, CHAN_VOICE, 0, thing->CrushPainSound, 1.f, ATTN_NORM);
 			}
@@ -6362,6 +6546,9 @@ int P_PushUp(AActor *thing, FChangePosition *cpos)
 		if ((thing->flags & MF_MISSILE) && (intersect->flags2 & MF2_REFLECTIVE) && (intersect->flags7 & MF7_THRUREFLECT))
 			continue;
 		if (!P_CanCollideWith(thing, intersect))
+			continue;
+
+		if (thing->player && P_ShouldPassThroughPlayer(thing, intersect))
 			continue;
 
 		if (!(intersect->flags2 & MF2_PASSMOBJ) ||
@@ -6426,6 +6613,9 @@ int P_PushDown(AActor *thing, FChangePosition *cpos)
 		if ((thing->flags & MF_MISSILE) && (intersect->flags2 & MF2_REFLECTIVE) && (intersect->flags7 & MF7_THRUREFLECT))
 			continue;
 		if (!P_CanCollideWith(thing, intersect))
+			continue;
+
+		if (thing->player && P_ShouldPassThroughPlayer(thing, intersect))
 			continue;
 
 		if (!(intersect->flags2 & MF2_PASSMOBJ) ||

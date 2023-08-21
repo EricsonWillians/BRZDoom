@@ -15,7 +15,7 @@ struct FZipLump : public FResourceLump
 	uint8_t	Method;
 	bool	NeedFileStart;
 	int		CompressedSize;
-	int		Position;
+	int64_t		Position;
 	unsigned CRC32;
 
 	virtual FileReader *GetReader();
@@ -41,7 +41,7 @@ class FZipFile : public FResourceFile
 public:
 	FZipFile(const char * filename, FileReader &file);
 	virtual ~FZipFile();
-	bool Open(bool quiet, LumpFilterInfo* filter);
+	bool Open(LumpFilterInfo* filter, FileSystemMessageFunc Printf);
 	virtual FResourceLump *GetLump(int no) { return ((unsigned)no < NumLumps)? &Lumps[no] : NULL; }
 };
 

@@ -102,6 +102,9 @@ public:
 	bool IsAxisMapDefault(int axis);
 	bool IsAxisScaleDefault(int axis);
 
+	bool GetEnabled();
+	void SetEnabled(bool enabled);
+
 	void SetDefaultConfig();
 	FString GetIdentifier();
 
@@ -138,6 +141,7 @@ protected:
 	DWORD LastPacketNumber;
 	int LastButtons;
 	bool Connected;
+	bool Enabled;
 
 	void Attached();
 	void Detached();
@@ -221,6 +225,7 @@ FXInputController::FXInputController(int index)
 {
 	Index = index;
 	Connected = false;
+	Enabled = true;
 	M_LoadJoystickConfig(this);
 }
 
@@ -269,7 +274,7 @@ void FXInputController::ProcessInput()
 	{
 		Attached();
 	}
-	if (state.dwPacketNumber == LastPacketNumber)
+	if (state.dwPacketNumber == LastPacketNumber || !Enabled)
 	{ // Nothing has changed since last time.
 		return;
 	}
@@ -310,7 +315,7 @@ void FXInputController::ProcessThumbstick(int value1, AxisInfo *axis1,
 {
 	uint8_t buttonstate;
 	double axisval1, axisval2;
-	
+
 	axisval1 = (value1 - SHRT_MIN) * 2.0 / 65536 - 1.0;
 	axisval2 = (value2 - SHRT_MIN) * 2.0 / 65536 - 1.0;
 	axisval1 = Joy_RemoveDeadZone(axisval1, axis1->DeadZone, NULL);
@@ -337,7 +342,7 @@ void FXInputController::ProcessTrigger(int value, AxisInfo *axis, int base)
 {
 	uint8_t buttonstate;
 	double axisval;
-	
+
 	axisval = Joy_RemoveDeadZone(value / 256.0, axis->DeadZone, &buttonstate);
 	Joy_GenerateButtonEvents(axis->ButtonValue, buttonstate, 1, base);
 	axis->ButtonValue = buttonstate;
@@ -626,6 +631,28 @@ bool FXInputController::IsAxisScaleDefault(int axis)
 		return Axes[axis].Multiplier == DefaultAxes[axis].Multiplier;
 	}
 	return true;
+}
+
+//===========================================================================
+//
+// FXInputController :: GetEnabled
+//
+//===========================================================================
+
+bool FXInputController::GetEnabled()
+{
+	return Enabled;
+}
+
+//===========================================================================
+//
+// FXInputController :: SetEnabled
+//
+//===========================================================================
+
+void FXInputController::SetEnabled(bool enabled)
+{
+	Enabled = enabled;
 }
 
 //===========================================================================

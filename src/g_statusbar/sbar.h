@@ -84,7 +84,8 @@ public:
 	void CallDraw(int bottom, int visibility);
 
 private:
-	TObjPtr<DHUDMessageBase*> Next = nullptr;
+	TObjPtr<DHUDMessageBase*> Next = MakeObjPtr<DHUDMessageBase*>(nullptr);
+;
 	uint32_t SBarID = 0;
 	friend class DBaseStatusBar;
 
@@ -98,7 +99,6 @@ class DHUDMessage : public DHUDMessageBase
 public:
 	DHUDMessage (FFont *font, const char *text, float x, float y, int hudwidth, int hudheight,
 		EColorRange textColor, float holdTime);
-	virtual void OnDestroy () override;
 
 	virtual void Serialize(FSerializer &arc);
 
@@ -124,7 +124,7 @@ public:
 	void SetNoWrap(bool nowrap)
 	{
 		NoWrap = nowrap;
-		ResetText(SourceText);
+		ResetText(SourceText.GetChars());
 	}
 	void SetClipRect(int x, int y, int width, int height, bool aspect)
 	{
@@ -137,7 +137,7 @@ public:
 	void SetWrapWidth(int wrap)
 	{
 		WrapWidth = wrap;
-		ResetText(SourceText);
+		ResetText(SourceText.GetChars());
 	}
 
 protected:
@@ -159,10 +159,10 @@ protected:
 	double Alpha;
 
 	void CalcClipCoords(int hudheight);
-	DHUDMessage () : SourceText(NULL) {}
+	DHUDMessage() = default;
 
 private:
-	char *SourceText;
+	FString SourceText;
 
 };
 

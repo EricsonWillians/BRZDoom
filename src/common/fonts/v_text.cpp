@@ -88,7 +88,6 @@ TArray<FBrokenLines> V_BreakLines (FFont *font, int maxwidth, const uint8_t *str
 			{
 				if (*string == '[')
 				{
-					const uint8_t* start = string;
 					while (*string != ']' && *string != '\0')
 					{
 						string++;
@@ -266,7 +265,7 @@ DEFINE_ACTION_FUNCTION(FFont, BreakLines)
 
 
 bool generic_ui;
-EXTERN_CVAR(String, language)
+bool special_i;
 
 bool CheckFontComplete(FFont* font)
 {
@@ -310,6 +309,19 @@ void UpdateGenericUI(bool cvar)
 		{
 			AlternativeBigFont = NewSmallFont;
 		}
+	}
+	// Turkish i crap. What a mess, just to save two code points... :(
+	switchstr = GStrings["REQUIRED_CHARACTERS"];
+	special_i = switchstr && strstr(switchstr, "\xc4\xb0") != nullptr; // capital dotted i (İ).
+	if (special_i) 
+	{
+		upperforlower['i'] = 0x130;
+		lowerforupper['I'] = 0x131;
+	}
+	else
+	{
+		upperforlower['i'] = 'I';
+		lowerforupper['I'] = 'i';
 	}
 }
 

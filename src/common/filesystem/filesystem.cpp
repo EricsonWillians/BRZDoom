@@ -47,8 +47,6 @@
 #include "printf.h"
 #include "md5.h"
 
-extern	FILE* hashfile;
-
 // MACROS ------------------------------------------------------------------
 
 #define NULL_INDEX		(0xffffffff)
@@ -154,7 +152,7 @@ struct FileSystem::LumpRecord
 
 // PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
 
-static void PrintLastError ();
+static void PrintLastError (FileSystemMessageFunc Printf);
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
@@ -164,7 +162,7 @@ FileSystem fileSystem;
 
 FileSystem::FileSystem()
 {
-	// This is needed to initialize the LumpRecord array, which depends on data only available here.
+	// Cannot be defaulted! This is needed to initialize the LumpRecord array, which depends on data only available here.
 }
 
 FileSystem::~FileSystem ()
@@ -201,14 +199,14 @@ void FileSystem::DeleteAll ()
 //
 //==========================================================================
 
-void FileSystem::InitSingleFile(const char* filename, bool quiet)
+bool FileSystem::InitSingleFile(const char* filename, FileSystemMessageFunc Printf)
 {
 	TArray<FString> filenames;
 	filenames.Push(filename);
-	InitMultipleFiles(filenames, true);
+	return InitMultipleFiles(filenames, nullptr, Printf);
 }
 
-void FileSystem::InitMultipleFiles (TArray<FString> &filenames, bool quiet, LumpFilterInfo* filter)
+bool FileSystem::InitMultipleFiles (TArray<FString> &filenames, LumpFilterInfo* filter, FileSystemMessageFunc Printf, bool allowduplicates, FILE* hashfile)
 {
 	int numfiles;
 
@@ -216,26 +214,41 @@ void FileSystem::InitMultipleFiles (TArray<FString> &filenames, bool quiet, Lump
 	DeleteAll();
 	numfiles = 0;
 
+	// first, check for duplicates
+	if (allowduplicates)
+	{
+		for (unsigned i=0;i<filenames.Size(); i++)
+		{
+			for (unsigned j=i+1;j<filenames.Size(); j++)
+			{
+				if (strcmp(filenames[i], filenames[j]) == 0)
+				{
+					filenames.Delete(j);
+					j--;
+				}
+			}
+		}
+	}
+
 	for(unsigned i=0;i<filenames.Size(); i++)
 	{
-		int baselump = NumEntries;
-		AddFile (filenames[i], nullptr, quiet, filter);
-		
+		AddFile (filenames[i], nullptr, filter, Printf, hashfile);
+
 		if (i == (unsigned)MaxIwadIndex) MoveLumpsInFolder("after_iwad/");
 		FStringf path("filter/%s", Files.Last()->GetHash().GetChars());
 		MoveLumpsInFolder(path);
 	}
-	
+
 	NumEntries = FileInfo.Size();
 	if (NumEntries == 0)
 	{
-		if (!quiet) I_FatalError("W_InitMultipleFiles: no files found");
-		else return;
+		return false;
 	}
 	if (filter && filter->postprocessFunc) filter->postprocessFunc();
 
 	// [RH] Set up hash table
 	InitHashChains ();
+	return true;
 }
 
 //==========================================================================
@@ -284,7 +297,7 @@ int FileSystem::AddFromBuffer(const char* name, const char* type, char* data, in
 	FileInfo.Last().resourceId = id;
 	return FileInfo.Size()-1;
 }
- 
+
 //==========================================================================
 //
 // AddFile
@@ -295,7 +308,7 @@ int FileSystem::AddFromBuffer(const char* name, const char* type, char* data, in
 // [RH] Removed reload hack
 //==========================================================================
 
-void FileSystem::AddFile (const char *filename, FileReader *filer, bool quiet, LumpFilterInfo* filter)
+void FileSystem::AddFile (const char *filename, FileReader *filer, LumpFilterInfo* filter, FileSystemMessageFunc Printf, FILE* hashfile)
 {
 	int startlump;
 	bool isdir = false;
@@ -306,10 +319,10 @@ void FileSystem::AddFile (const char *filename, FileReader *filer, bool quiet, L
 		// Does this exist? If so, is it a directory?
 		if (!DirEntryExists(filename, &isdir))
 		{
-			if (!quiet)
+			if (Printf)
 			{
-				Printf(TEXTCOLOR_RED "%s: File or Directory not found\n", filename);
-				PrintLastError();
+				Printf(FSMessageLevel::Error, "%s: File or Directory not found\n", filename);
+				PrintLastError(Printf);
 			}
 			return;
 		}
@@ -318,10 +331,10 @@ void FileSystem::AddFile (const char *filename, FileReader *filer, bool quiet, L
 		{
 			if (!filereader.OpenFile(filename))
 			{ // Didn't find file
-				if (!quiet)
+				if (Printf)
 				{
-					Printf(TEXTCOLOR_RED "%s: File not found\n", filename);
-					PrintLastError();
+					Printf(FSMessageLevel::Error, "%s: File not found\n", filename);
+					PrintLastError(Printf);
 				}
 				return;
 			}
@@ -329,19 +342,20 @@ void FileSystem::AddFile (const char *filename, FileReader *filer, bool quiet, L
 	}
 	else filereader = std::move(*filer);
 
-	if (!batchrun && !quiet) Printf (" adding %s", filename);
 	startlump = NumEntries;
 
 	FResourceFile *resfile;
-	
+
+
 	if (!isdir)
-		resfile = FResourceFile::OpenResourceFile(filename, filereader, quiet, false, filter);
+		resfile = FResourceFile::OpenResourceFile(filename, filereader, false, filter, Printf);
 	else
-		resfile = FResourceFile::OpenDirectory(filename, quiet, filter);
+		resfile = FResourceFile::OpenDirectory(filename, filter, Printf);
 
 	if (resfile != NULL)
 	{
-		if (!quiet && !batchrun) Printf(", %d lumps\n", resfile->LumpCount());
+		if (!batchrun && Printf) 
+			Printf(FSMessageLevel::Message, "adding %s, %d lumps\n", filename, resfile->LumpCount());
 
 		uint32_t lumpstart = FileInfo.Size();
 
@@ -363,11 +377,11 @@ void FileSystem::AddFile (const char *filename, FileReader *filer, bool quiet, L
 				FString path;
 				path.Format("%s:%s", filename, lump->getName());
 				auto embedded = lump->NewReader();
-				AddFile(path, &embedded, quiet, filter);
+				AddFile(path, &embedded, filter, Printf, hashfile);
 			}
 		}
 
-		if (hashfile && !quiet)
+		if (hashfile)
 		{
 			uint8_t cksum[16];
 			char cksumout[33];
@@ -382,7 +396,7 @@ void FileSystem::AddFile (const char *filename, FileReader *filer, bool quiet, L
 
 				for (size_t j = 0; j < sizeof(cksum); ++j)
 				{
-					sprintf(cksumout + (j * 2), "%02X", cksum[j]);
+					snprintf(cksumout + (j * 2), 3, "%02X", cksum[j]);
 				}
 
 				fprintf(hashfile, "file: %s, hash: %s, size: %d\n", filename, cksumout, (int)filereader.GetLength());
@@ -404,7 +418,7 @@ void FileSystem::AddFile (const char *filename, FileReader *filer, bool quiet, L
 
 					for (size_t j = 0; j < sizeof(cksum); ++j)
 					{
-						sprintf(cksumout + (j * 2), "%02X", cksum[j]);
+						snprintf(cksumout + (j * 2), 3, "%02X", cksum[j]);
 					}
 
 					fprintf(hashfile, "file: %s, lump: %s, hash: %s, size: %d\n", filename, lump->getName(), cksumout, lump->LumpSize);
@@ -828,7 +842,7 @@ int FileSystem::GetFileFlags (int lump)
 
 uint32_t FileSystem::LumpNameHash (const char *s)
 {
-	const uint32_t *table = GetCRCTable ();;
+	const uint32_t *table = GetCRCTable ();
 	uint32_t hash = 0xffffffff;
 	int i;
 
@@ -946,10 +960,10 @@ void FileSystem::MoveLumpsInFolder(const char *path)
 	{
 		return;
 	}
-	
+
 	auto len = strlen(path);
 	auto rfnum = FileInfo.Last().rfnum;
-	
+
 	unsigned i;
 	for (i = 0; i < FileInfo.Size(); i++)
 	{
@@ -1022,7 +1036,7 @@ int FileSystem::FindLumpMulti (const char **names, int *lastlump, bool anyns, in
 	{
 		if (anyns || lump_p->Namespace == ns_global)
 		{
-			
+
 			for(const char **name = names; *name != NULL; name++)
 			{
 				if (!strnicmp(*name, lump_p->shortName.String, 8))
@@ -1512,7 +1526,7 @@ int FileSystem::GetEntryCount (int rfnum) const noexcept
 	{
 		return 0;
 	}
-	
+
 	return Files[rfnum]->LumpCount();
 }
 
@@ -1634,7 +1648,7 @@ __declspec(dllimport) void * __stdcall LocalFree (void *);
 __declspec(dllimport) unsigned long __stdcall GetLastError ();
 }
 
-static void PrintLastError ()
+static void PrintLastError (FileSystemMessageFunc Printf)
 {
 	char *lpMsgBuf;
 	FormatMessageA(0x1300 /*FORMAT_MESSAGE_ALLOCATE_BUFFER | 
@@ -1647,14 +1661,14 @@ static void PrintLastError ()
 		0,
 		NULL 
 	);
-	Printf (TEXTCOLOR_RED "  %s\n", lpMsgBuf);
+	Printf (FSMessageLevel::Error, "  %s\n", lpMsgBuf);
 	// Free the buffer.
 	LocalFree( lpMsgBuf );
 }
 #else
-static void PrintLastError ()
+static void PrintLastError (FileSystemMessageFunc Printf)
 {
-	Printf (TEXTCOLOR_RED "  %s\n", strerror(errno));
+	Printf(FSMessageLevel::Error, "  %s\n", strerror(errno));
 }
 #endif
 
@@ -1668,4 +1682,3 @@ FResourceLump* FileSystem::GetFileAt(int no)
 {
 	return FileInfo[no].lump;
 }
-

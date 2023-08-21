@@ -53,6 +53,8 @@
 #include "keydef.h"
 #include "printf.h"
 
+#include "i_mainwindow.h"
+
 #define SAFE_RELEASE(x)		{ if (x != NULL) { x->Release(); x = NULL; } }
 
 // WBEMIDL BITS -- because w32api doesn't have this, either -----------------
@@ -178,6 +180,9 @@ public:
 	bool IsAxisMapDefault(int axis);
 	bool IsAxisScaleDefault(int axis);
 
+	bool GetEnabled();
+	void SetEnabled(bool enabled);
+
 	void SetDefaultConfig();
 	FString GetIdentifier();
 
@@ -216,6 +221,8 @@ protected:
 
 	DIOBJECTDATAFORMAT *Objects;
 	DIDATAFORMAT DataFormat;
+
+	bool Enabled;
 
 	static BOOL CALLBACK EnumObjectsCallback(LPCDIDEVICEOBJECTINSTANCE lpddoi, LPVOID pvRef);
 	void OrderAxes();
@@ -266,7 +273,6 @@ protected:
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 extern LPDIRECTINPUT8 g_pdi;
-extern HWND Window;
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
@@ -280,14 +286,6 @@ CUSTOM_CVAR(Bool, joy_dinput, true, CVAR_GLOBALCONFIG|CVAR_ARCHIVE|CVAR_NOINITCA
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
 
 static const uint8_t POVButtons[9] = { 0x01, 0x03, 0x02, 0x06, 0x04, 0x0C, 0x08, 0x09, 0x00 };
-
-//("dc12a687-737f-11cf-884d-00aa004b2e24")
-static const IID IID_IWbemLocator =		{ 0xdc12a687, 0x737f, 0x11cf,
-	{ 0x88, 0x4d, 0x00, 0xaa, 0x00, 0x4b, 0x2e, 0x24 } };
-
-//("4590f811-1d3a-11d0-891f-00aa004b2e24")
-static const CLSID CLSID_WbemLocator =	{ 0x4590f811, 0x1d3a, 0x11d0,
-	{ 0x89, 0x1f, 0x00, 0xaa, 0x00, 0x4b, 0x2e, 0x24 } };
 
 // CODE --------------------------------------------------------------------
 
@@ -304,6 +302,7 @@ FDInputJoystick::FDInputJoystick(const GUID *instance, FString &name)
 	Instance = *instance;
 	Name = name;
 	Marked = false;
+	Enabled = true;
 }
 
 //===========================================================================
@@ -380,7 +379,7 @@ bool FDInputJoystick::GetDevice()
 		Printf(TEXTCOLOR_ORANGE "Setting data format for %s failed.\n", Name.GetChars());
 		return false;
 	}
-	hr = Device->SetCooperativeLevel(Window, DISCL_NONEXCLUSIVE | DISCL_FOREGROUND);
+	hr = Device->SetCooperativeLevel(mainwindow.GetHandle(), DISCL_NONEXCLUSIVE | DISCL_FOREGROUND);
 	if (FAILED(hr))
 	{
 		Printf(TEXTCOLOR_ORANGE "Setting cooperative level for %s failed.\n", Name.GetChars());
@@ -417,7 +416,7 @@ void FDInputJoystick::ProcessInput()
 	{
 		hr = Device->Acquire();
 	}
-	if (FAILED(hr))
+	if (FAILED(hr) || !Enabled)
 	{
 		return;
 	}
@@ -989,6 +988,28 @@ bool FDInputJoystick::IsAxisScaleDefault(int axis)
 		return Axes[axis].Multiplier == Axes[axis].DefaultMultiplier;
 	}
 	return true;
+}
+
+//===========================================================================
+//
+// FDInputJoystick :: GetEnabled
+//
+//===========================================================================
+
+bool FDInputJoystick::GetEnabled()
+{
+	return Enabled;
+}
+
+//===========================================================================
+//
+// FDInputJoystick :: SetEnabled
+//
+//===========================================================================
+
+void FDInputJoystick::SetEnabled(bool enabled)
+{
+	Enabled = enabled;
 }
 
 //===========================================================================

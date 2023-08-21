@@ -119,13 +119,15 @@ static FCompatOption Options[] =
 {
 	{ "setslopeoverflow",		BCOMPATF_SETSLOPEOVERFLOW, SLOT_BCOMPAT },
 	{ "resetplayerspeed",		BCOMPATF_RESETPLAYERSPEED, SLOT_BCOMPAT },
-	{ "vileghosts",				BCOMPATF_VILEGHOSTS, SLOT_BCOMPAT },
+	{ "vileghosts",				COMPATF_VILEGHOSTS, SLOT_COMPAT },
 	{ "ignoreteleporttags",		BCOMPATF_BADTELEPORTERS, SLOT_BCOMPAT },
 	{ "rebuildnodes",			BCOMPATF_REBUILDNODES, SLOT_BCOMPAT },
 	{ "linkfrozenprops",		BCOMPATF_LINKFROZENPROPS, SLOT_BCOMPAT },
 	{ "floatbob",				BCOMPATF_FLOATBOB, SLOT_BCOMPAT },
 	{ "noslopeid",				BCOMPATF_NOSLOPEID, SLOT_BCOMPAT },
 	{ "clipmidtex",				BCOMPATF_CLIPMIDTEX, SLOT_BCOMPAT },
+	{ "nosectionmerge",			BCOMPATF_NOSECTIONMERGE, SLOT_BCOMPAT },
+
 
 	// list copied from g_mapinfo.cpp
 	{ "shorttex",				COMPATF_SHORTTEX, SLOT_COMPAT },
@@ -150,7 +152,6 @@ static FCompatOption Options[] =
 	{ "anybossdeath",			COMPATF_ANYBOSSDEATH, SLOT_COMPAT },// [GZ] Added for UAC_DEAD
 	{ "mushroom",				COMPATF_MUSHROOM, SLOT_COMPAT },
 	{ "mbfmonstermove",			COMPATF_MBFMONSTERMOVE, SLOT_COMPAT },
-	{ "corpsegibs",				COMPATF_CORPSEGIBS, SLOT_COMPAT },
 	{ "noblockfriends",			COMPATF_NOBLOCKFRIENDS, SLOT_COMPAT },
 	{ "spritesort",				COMPATF_SPRITESORT, SLOT_COMPAT },
 	{ "hitscan",				COMPATF_HITSCAN, SLOT_COMPAT },
@@ -169,6 +170,8 @@ static FCompatOption Options[] =
 	{ "explode2",				COMPATF2_EXPLODE2, SLOT_COMPAT2 },
 	{ "railing",				COMPATF2_RAILING, SLOT_COMPAT2 },
 	{ "scriptwait",				COMPATF2_SCRIPTWAIT, SLOT_COMPAT2 },
+	{ "nombf21",				COMPATF2_NOMBF21, SLOT_COMPAT2 },
+	{ "voodoozombies",			COMPATF2_VOODOO_ZOMBIES, SLOT_COMPAT2 },
 	{ NULL, 0, 0 }
 };
 
@@ -288,13 +291,20 @@ FName MapLoader::CheckCompatibility(MapData *map)
 	Level->ii_compatflags2 = 0;
 	Level->ib_compatflags = 0;
 
-	// When playing Doom IWAD levels force COMPAT_SHORTTEX and COMPATF_LIGHT.
+	// When playing Doom IWAD levels force BCOMPATF_NOSECTIONMERGE, COMPAT_SHORTTEX and COMPATF_LIGHT.
 	// I'm not sure if the IWAD maps actually need COMPATF_LIGHT but it certainly does not hurt.
 	// TNT's MAP31 also needs COMPATF_STAIRINDEX but that only gets activated for TNT.WAD.
-	if (fileSystem.GetFileContainer(map->lumpnum) == fileSystem.GetIwadNum() && (gameinfo.flags & GI_COMPATSHORTTEX) && Level->maptype == MAPTYPE_DOOM)
+	if (fileSystem.GetFileContainer(map->lumpnum) == fileSystem.GetIwadNum())
 	{
-		Level->ii_compatflags = COMPATF_SHORTTEX|COMPATF_LIGHT;
-		if (gameinfo.flags & GI_COMPATSTAIRS) Level->ii_compatflags |= COMPATF_STAIRINDEX;
+		if ((gameinfo.flags & GI_COMPATSHORTTEX) && Level->maptype == MAPTYPE_DOOM)
+		{
+			Level->ii_compatflags = COMPATF_SHORTTEX | COMPATF_LIGHT;
+			if (gameinfo.flags & GI_COMPATSTAIRS) Level->ii_compatflags |= COMPATF_STAIRINDEX;
+		}
+		if (gameinfo.flags & GI_NOSECTIONMERGE)
+		{
+			Level->ib_compatflags |= BCOMPATF_NOSECTIONMERGE;
+		}
 	}
 
 	map->GetChecksum(md5.Bytes);

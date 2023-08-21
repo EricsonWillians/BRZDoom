@@ -68,7 +68,7 @@ class MessageBoxMenu : Menu
 			if (SmallFont && SmallFont.CanPrint(message) && SmallFont.CanPrint("$TXT_YES") && SmallFont.CanPrint("$TXT_NO")) textFont = SmallFont;
 			else if (OriginalSmallFont && OriginalSmallFont.CanPrint(message) && OriginalSmallFont.CanPrint("$TXT_YES") && OriginalSmallFont.CanPrint("$TXT_NO")) textFont = OriginalSmallFont;
 		}
-		
+
 		if (!textFont)
 		{
 			arrowFont = textFont = NewSmallFont;
@@ -79,7 +79,7 @@ class MessageBoxMenu : Menu
 		}
 		else
 		{
-			arrowFont = ConFont;
+			arrowFont = ((textFont && textFont.GetGlyphHeight(0xd) > 0) ? textFont : ConFont);
 			destWidth = CleanWidth;
 			destHeight = CleanHeight;
 			selector = "\xd";
@@ -97,7 +97,7 @@ class MessageBoxMenu : Menu
 		}
 		Handler = native_handler;
 	}
-	
+
 	//=============================================================================
 	//
 	//
@@ -134,13 +134,13 @@ class MessageBoxMenu : Menu
 				if ((MenuTime() % 8) < 6)
 				{
 					screen.DrawText(arrowFont, OptionMenuSettings.mFontColorSelection,
-						destWidth/2 - 11, y + fontheight * messageSelection, selector, DTA_VirtualWidth, destWidth, DTA_VirtualHeight, destHeight, DTA_KeepRatio, true);
+						destWidth/2 - 3 - arrowFont.StringWidth(selector), y + fontheight * messageSelection, selector, DTA_VirtualWidth, destWidth, DTA_VirtualHeight, destHeight, DTA_KeepRatio, true);
 				}
 			}
 		}
 	}
 
-	
+
 	//=============================================================================
 	//
 	//
@@ -227,7 +227,7 @@ class MessageBoxMenu : Menu
 		}
 		return Super.OnUIEvent(ev);
 	}
-	
+
 	override bool OnInputEvent(InputEvent ev)
 	{
 		if (ev.type == InputEvent.Type_KeyDown)

@@ -54,6 +54,7 @@
 #include <new>
 #include <utility>
 #include <iterator>
+#include <algorithm>
 
 #if !defined(_WIN32)
 #include <inttypes.h>		// for intptr_t
@@ -61,16 +62,22 @@
 #include <stdint.h>			// for mingw
 #endif
 
-#include "m_alloc.h"
+#if __has_include("m_alloc.h")
+	#include "m_alloc.h"
+#else
+	#define M_Malloc malloc
+	#define M_Realloc realloc
+	#define M_Free free
+#endif
 
-template<typename T> class TIterator : public std::iterator<std::random_access_iterator_tag, T>
+template<typename T> class TIterator
 {
 public:
-	typedef typename TIterator::value_type value_type;
-	typedef typename TIterator::difference_type difference_type;
-	typedef typename TIterator::pointer pointer;
-	typedef typename TIterator::reference reference;
-	typedef typename TIterator::iterator_category iterator_category;
+    using iterator_category = std::random_access_iterator_tag;
+    using value_type        = T;
+    using difference_type   = ptrdiff_t;
+    using pointer           = value_type*;
+    using reference         = value_type&;
 
 	TIterator(T* ptr = nullptr) { m_ptr = ptr; }
 
@@ -105,6 +112,17 @@ protected:
 	T* m_ptr;
 };
 
+// magic little helper. :)
+template <class T>
+class backwards
+{
+	T& _obj;
+public:
+	backwards(T &obj) : _obj(obj) {}
+	auto begin() {return _obj.rbegin();}
+	auto end() {return _obj.rend();}
+};
+
 
 // TArray -------------------------------------------------------------------
 
@@ -125,6 +143,8 @@ public:
 
     typedef TIterator<T>                       iterator;
     typedef TIterator<const T>                 const_iterator;
+    using reverse_iterator       =             std::reverse_iterator<iterator>;
+    using const_reverse_iterator =             std::reverse_iterator<const_iterator>;
 	typedef T							value_type;
 
     iterator begin()
@@ -152,8 +172,33 @@ public:
 	{
 		return &Array[Count];
 	}
-	
-	
+
+	reverse_iterator rbegin()
+	{
+		return reverse_iterator(end());
+	}
+	const_reverse_iterator rbegin() const
+	{
+		return const_reverse_iterator(end());
+	}
+	const_reverse_iterator crbegin() const
+	{
+		return const_reverse_iterator(cend());
+	}
+
+	reverse_iterator rend()
+	{
+		return reverse_iterator(begin());
+	}
+	const_reverse_iterator rend() const
+	{
+		return const_reverse_iterator(begin());
+	}
+	const_reverse_iterator crend() const
+	{
+		return const_reverse_iterator(cbegin());
+	}
+
 
 	////////
 	// This is a dummy constructor that does nothing. The purpose of this
@@ -169,7 +214,7 @@ public:
 	{
 	}
 	////////
-	TArray ()
+	constexpr TArray ()
 	{
 		Most = 0;
 		Count = 0;
@@ -178,9 +223,9 @@ public:
 	explicit TArray (size_t max, bool reserve = false)
 	{
 		Most = (unsigned)max;
-		Count = (unsigned)(reserve? max : 0);
-		Array = (T *)M_Malloc (sizeof(T)*max);
-		if (reserve && Count > 0)
+		Count = (unsigned)(reserve ? max : 0);
+		Array = max > 0 ? (T *)M_Malloc (sizeof(T)*max) : nullptr;
+		if (Count > 0)
 		{
 			ConstructEmpty(0, Count - 1);
 		}
@@ -272,13 +317,31 @@ public:
 	// Returns a reference to the last element
 	T &Last() const
 	{
+		assert(Count > 0);
 		return Array[Count-1];
 	}
 
-	// returns address of first element
-	T *Data() const
+	T SafeGet (size_t index, const T& defaultval) const
 	{
-		return &Array[0];
+		if (index <= Count) return Array[index];
+		else return defaultval;
+	}
+
+	// returns address of first element
+	T *Data(size_t index = 0) const
+	{
+		assert(index <= Count);
+		return &Array[index];
+	}
+
+	unsigned IndexOf(const T& elem) const
+	{
+		return &elem - Array;
+	}
+
+	unsigned IndexOf(const T* elem) const
+	{
+		return unsigned(elem - Array);
 	}
 
     unsigned int Find(const T& item) const
@@ -354,6 +417,27 @@ public:
 		{
 			new(&Array[start + i]) T(std::move(item[i]));
 		}
+		item.Clear();
+		return start;
+	}
+
+	unsigned AppendFill(const T& val, unsigned append_count)
+	{
+		unsigned start = Count;
+
+		Grow(append_count);
+		Count += append_count;
+		if constexpr (std::is_trivially_copyable<T>::value)
+		{
+			std::fill(Array + start, Array + Count, val);
+		}
+		else
+		{
+			for (unsigned i = 0; i < append_count; i++)
+			{
+				new(&Array[start + i]) T(val);
+			}
+		}
 		return start;
 	}
 
@@ -391,6 +475,8 @@ public:
 
 	void Delete (unsigned int index, int deletecount)
 	{
+        if(index >= Count) return;
+        
 		if (index + deletecount > Count)
 		{
 			deletecount = Count - index;
@@ -516,6 +602,10 @@ public:
 	{
 		return Count;
 	}
+	int SSize() const
+	{
+		return (int)Count;
+	}
 	unsigned int Max () const
 	{
 		return Most;
@@ -636,6 +726,8 @@ public:
 
 	typedef TIterator<T>                       iterator;
 	typedef TIterator<const T>                 const_iterator;
+    using reverse_iterator       =             std::reverse_iterator<iterator>;
+    using const_reverse_iterator =             std::reverse_iterator<const_iterator>;
 	typedef T                                  value_type;
 
 	iterator begin()
@@ -662,6 +754,32 @@ public:
 	const_iterator cend() const
 	{
 		return &Array[Count];
+	}
+
+	reverse_iterator rbegin()
+	{
+		return reverse_iterator(end());
+	}
+	const_reverse_iterator rbegin() const
+	{
+		return const_reverse_iterator(end());
+	}
+	const_reverse_iterator crbegin() const
+	{
+		return const_reverse_iterator(cend());
+	}
+
+	reverse_iterator rend()
+	{
+		return reverse_iterator(begin());
+	}
+	const_reverse_iterator rend() const
+	{
+		return const_reverse_iterator(begin());
+	}
+	const_reverse_iterator crend() const
+	{
+		return const_reverse_iterator(cbegin());
 	}
 
 	void Init(T *ptr, unsigned cnt)
@@ -826,6 +944,9 @@ public:
 	typedef struct { const KT Key; VT Value; } Pair;
 	typedef const Pair ConstPair;
 
+	typedef KT KeyType;
+	typedef VT ValueType;
+
 	TMap() { NumUsed = 0; SetNodeVector(1); }
 	TMap(hash_t size) { NumUsed = 0; SetNodeVector(size); }
 	~TMap() { ClearNodeVector(); }
@@ -843,7 +964,7 @@ public:
 		LastFree = o.LastFree;		/* any free position is before this position */
 		Size = o.Size;		/* must be a power of 2 */
 		NumUsed = o.NumUsed;
-		
+
 		o.Size = 0;
 		o.NumUsed = 0;
 		o.SetNodeVector(1);
@@ -1579,7 +1700,7 @@ public:
 	}
 
 	BitArray(unsigned elem)
-		: bytes((elem + 7) / 8, true)
+		: bytes((elem + 7) / 8, true), size(elem)
 	{
 
 	}
@@ -1617,6 +1738,12 @@ public:
 		return !!(bytes[index >> 3] & (1 << (index & 7)));
 	}
 
+	// for when array syntax cannot be used.
+	bool Check(size_t index) const
+	{
+		return !!(bytes[index >> 3] & (1 << (index & 7)));
+	}
+
 	void Set(size_t index, bool set = true)
 	{
 		if (!set) Clear(index);
@@ -1636,6 +1763,11 @@ public:
 	void Zero()
 	{
 		memset(&bytes[0], 0, bytes.Size());
+	}
+
+	TArray<uint8_t> &Storage()
+	{
+		return bytes;
 	}
 };
 
@@ -1704,6 +1836,8 @@ public:
 
 	typedef TIterator<T>                       iterator;
 	typedef TIterator<const T>                 const_iterator;
+    using reverse_iterator       =             std::reverse_iterator<iterator>;
+    using const_reverse_iterator =             std::reverse_iterator<const_iterator>;
 	typedef T                                  value_type;
 
 	iterator begin()
@@ -1730,6 +1864,32 @@ public:
 	const_iterator cend() const
 	{
 		return &Array[Count];
+	}
+
+	reverse_iterator rbegin()
+	{
+		return reverse_iterator(end());
+	}
+	const_reverse_iterator rbegin() const
+	{
+		return const_reverse_iterator(end());
+	}
+	const_reverse_iterator crbegin() const
+	{
+		return const_reverse_iterator(cend());
+	}
+
+	reverse_iterator rend()
+	{
+		return reverse_iterator(begin());
+	}
+	const_reverse_iterator rend() const
+	{
+		return const_reverse_iterator(begin());
+	}
+	const_reverse_iterator crend() const
+	{
+		return const_reverse_iterator(cbegin());
 	}
 
 
@@ -1762,18 +1922,20 @@ public:
 	// Return a reference to an element
 	T &operator[] (size_t index) const
 	{
+		assert(index < Count);
 		return Array[index];
 	}
 	// Returns a reference to the last element
 	T &Last() const
 	{
+		assert(Count > 0);
 		return Array[Count - 1];
 	}
 
 	// returns address of first element
 	T *Data() const
 	{
-		return &Array[0];
+		return Array;
 	}
 
 	unsigned Size() const
@@ -1807,3 +1969,9 @@ private:
 	T *Array;
 	unsigned int Count;
 };
+
+#if !__has_include("m_alloc.h")
+	#undef M_Malloc
+	#undef M_Realloc
+	#undef M_Free
+#endif

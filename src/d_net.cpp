@@ -51,7 +51,7 @@
 #include "st_start.h"
 #include "teaminfo.h"
 #include "p_conversation.h"
-#include "d_event.h"
+#include "d_eventbase.h"
 #include "p_enemy.h"
 #include "m_argv.h"
 #include "p_lnspec.h"
@@ -68,6 +68,10 @@
 #include "vm.h"
 #include "gstrings.h"
 #include "s_music.h"
+#include "screenjob.h"
+#include "d_main.h"
+#include "i_interface.h"
+#include "savegamemanager.h"
 
 EXTERN_CVAR (Int, disableautosave)
 EXTERN_CVAR (Int, autosavecount)
@@ -124,7 +128,7 @@ int				playerfornode[MAXNETNODES];
 
 int 			maketic;
 int 			skiptics;
-int 			ticdup;
+int 			ticdup = 1;
 
 void D_ProcessEvents (void); 
 void G_BuildTiccmd (ticcmd_t *cmd); 
@@ -1402,7 +1406,6 @@ struct ArbitrateData
 bool DoArbitrate (void *userdata)
 {
 	ArbitrateData *data = (ArbitrateData *)userdata;
-	char *s;
 	uint8_t *stream;
 	int version;
 	int node;
@@ -1451,7 +1454,7 @@ bool DoArbitrate (void *userdata)
 
 				data->playersdetected[0] |= 1 << netbuffer[1];
 
-				StartScreen->NetMessage ("Found %s (node %d, player %d)",
+				I_NetMessage ("Found %s (node %d, player %d)",
 						players[netbuffer[1]].userinfo.GetName(),
 						node, netbuffer[1]+1);
 			}
@@ -1460,13 +1463,11 @@ bool DoArbitrate (void *userdata)
 		{
 			data->gotsetup[0] = 0x80;
 
-			ticdup = doomcom.ticdup = netbuffer[1];
+			ticdup = doomcom.ticdup = clamp<int>(netbuffer[1], 1, MAXTICDUP);
 			NetMode = netbuffer[2];
 
 			stream = &netbuffer[3];
-			s = ReadString (&stream);
-			startmap = s;
-			delete[] s;
+			startmap = ReadStringConst(&stream);
 			rngseed = ReadLong (&stream);
 			C_ReadCVars (&stream);
 		}
@@ -1501,7 +1502,9 @@ bool DoArbitrate (void *userdata)
 		netbuffer[1] = consoleplayer;
 		netbuffer[9] = data->gotsetup[0];
 		stream = &netbuffer[10];
-		D_WriteUserInfoStrings (consoleplayer, &stream, true);
+		auto str = D_GetUserInfoStrings (consoleplayer, true);
+		memcpy(stream, str.GetChars(), str.Len() + 1);
+		stream += str.Len();
 		SendSetup (data->playersdetected, data->gotsetup, int(stream - netbuffer));
 	}
 	else
@@ -1516,7 +1519,9 @@ bool DoArbitrate (void *userdata)
 				{
 					netbuffer[1] = j;
 					stream = &netbuffer[9];
-					D_WriteUserInfoStrings (j, &stream, true);
+					auto str = D_GetUserInfoStrings(j, true);
+					memcpy(stream, str.GetChars(), str.Len() + 1);
+					stream += str.Len();
 					HSendPacket (i, int(stream - netbuffer));
 				}
 			}
@@ -1599,8 +1604,8 @@ bool D_ArbitrateNetStart (void)
 		data.gotsetup[0] = 0x80;
 	}
 
-	StartScreen->NetInit ("Exchanging game information", 1);
-	if (!StartScreen->NetLoop (DoArbitrate, &data))
+	I_NetInit ("Exchanging game information", 1);
+	if (!I_NetLoop (DoArbitrate, &data))
 	{
 		return false;
 	}
@@ -1618,7 +1623,7 @@ bool D_ArbitrateNetStart (void)
 			fprintf (debugfile, "player %d is on node %d\n", i, nodeforplayer[i]);
 		}
 	}
-	StartScreen->NetDone();
+	I_NetDone();
 	return true;
 }
 
@@ -1851,7 +1856,7 @@ void TryRunTics (void)
 	int 		counts;
 	int 		numplaying;
 
-	bool doWait = (cl_capfps || pauseext || (r_NoInterpolate && !M_IsAnimated() /*&& gamestate != GS_INTERMISSION && gamestate != GS_INTRO*/));
+	bool doWait = (cl_capfps || pauseext || (r_NoInterpolate && !M_IsAnimated()));
 
 	// get real tics
 	if (doWait)
@@ -1883,7 +1888,7 @@ void TryRunTics (void)
 		}
 	}
 
-	if (ticdup == 1)
+	if (ticdup <= 1)
 	{
 		availabletics = lowtic - gametic;
 	}
@@ -2158,7 +2163,7 @@ static int RemoveClass(FLevelLocals *Level, const PClass *cls)
 void Net_DoCommand (int type, uint8_t **stream, int player)
 {
 	uint8_t pos = 0;
-	char *s = NULL;
+	const char* s = nullptr;
 	int i;
 
 	switch (type)
@@ -2168,8 +2173,7 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 			const char *name = players[player].userinfo.GetName();
 			uint8_t who = ReadByte (stream);
 
-			s = ReadString (stream);
-			CleanseString (s);
+			s = ReadStringConst(stream);
 			if (((who & 1) == 0) || players[player].userinfo.GetTeam() == TEAM_NONE)
 			{ // Said to everyone
 				if (who & 2)
@@ -2198,18 +2202,15 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 		break;
 
 	case DEM_MUSICCHANGE:
-		s = ReadString (stream);
-		S_ChangeMusic (s);
+		S_ChangeMusic(ReadStringConst(stream));
 		break;
 
 	case DEM_PRINT:
-		s = ReadString (stream);
-		Printf ("%s", s);
+		Printf("%s", ReadStringConst(stream));
 		break;
 
 	case DEM_CENTERPRINT:
-		s = ReadString (stream);
-		C_MidPrint (nullptr, s);
+		C_MidPrint(nullptr, ReadStringConst(stream));
 		break;
 
 	case DEM_UINFCHANGED:
@@ -2225,7 +2226,7 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 		break;
 
 	case DEM_GIVECHEAT:
-		s = ReadString (stream);
+		s = ReadStringConst(stream);
 		cht_Give (&players[player], s, ReadLong (stream));
 		if (player != consoleplayer)
 		{
@@ -2237,12 +2238,12 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 		break;
 
 	case DEM_TAKECHEAT:
-		s = ReadString (stream);
+		s = ReadStringConst(stream);
 		cht_Take (&players[player], s, ReadLong (stream));
 		break;
 
 	case DEM_SETINV:
-		s = ReadString(stream);
+		s = ReadStringConst(stream);
 		i = ReadLong(stream);
 		cht_SetInv(&players[player], s, i, !!ReadByte(stream));
 		break;
@@ -2266,7 +2267,7 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 		/* intentional fall-through */
 	case DEM_CHANGEMAP:
 		// Change to another map without disconnecting other players
-		s = ReadString (stream);
+		s = ReadStringConst(stream);
 		// Using LEVEL_NOINTERMISSION tends to throw the game out of sync.
 		// That was a long time ago. Maybe it works now?
 		primaryLevel->flags |= LEVEL_CHANGEMAPCHEAT;
@@ -2353,7 +2354,7 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 			uint8_t special = 0;
 			int args[5];
 
-			s = ReadString (stream);
+			s = ReadStringConst(stream);
 			if (type >= DEM_SUMMON2 && type <= DEM_SUMMONFOE2)
 			{
 				angle = ReadWord(stream);
@@ -2402,7 +2403,7 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 
 							if (type >= DEM_SUMMON2 && type <= DEM_SUMMONFOE2)
 							{
-								spawned->Angles.Yaw = source->Angles.Yaw - angle;
+								spawned->Angles.Yaw = source->Angles.Yaw - DAngle::fromDeg(angle);
 								spawned->special = special;
 								for(i = 0; i < 5; i++) {
 									spawned->args[i] = args[i];
@@ -2417,12 +2418,12 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 		break;
 
 	case DEM_SPRAY:
-		s = ReadString(stream);
+		s = ReadStringConst(stream);
 		SprayDecal(players[player].mo, s);
 		break;
 
 	case DEM_MDK:
-		s = ReadString(stream);
+		s = ReadStringConst(stream);
 		cht_DoMDK(&players[player], s);
 		break;
 
@@ -2445,30 +2446,14 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 	case DEM_SAVEGAME:
 		if (gamestate == GS_LEVEL)
 		{
-			s = ReadString (stream);
-			savegamefile = s;
-			delete[] s;
-			s = ReadString (stream);
-			savedescription = s;
+			savegamefile = ReadStringConst(stream);
+			savedescription = ReadStringConst(stream);
 			if (player != consoleplayer)
 			{
 				// Paths sent over the network will be valid for the system that sent
 				// the save command. For other systems, the path needs to be changed.
-				const char *fileonly = savegamefile.GetChars();
-				const char *slash = strrchr (fileonly, '\\');
-				if (slash != NULL)
-				{
-					fileonly = slash + 1;
-				}
-				slash = strrchr (fileonly, '/');
-				if (slash != NULL)
-				{
-					fileonly = slash + 1;
-				}
-				if (fileonly != savegamefile.GetChars())
-				{
-					savegamefile = G_BuildSaveName (fileonly, -1);
-				}
+				FString basename = ExtractFileBase(savegamefile, true);
+				savegamefile = G_BuildSaveName (basename);
 			}
 		}
 		gameaction = ga_savegame;
@@ -2530,7 +2515,7 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 
 	case DEM_RUNNAMEDSCRIPT:
 		{
-			s = ReadString(stream);
+			s = ReadStringConst(stream);
 			int argn = ReadByte(stream);
 
 			RunScript(stream, players[player].mo, -FName(s).GetIndex(), argn & 127, (argn & 128) ? ACS_ALWAYS : 0);
@@ -2569,8 +2554,8 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 
 	case DEM_MORPHEX:
 		{
-			s = ReadString (stream);
-			FString msg = cht_Morph (players + player, PClass::FindActor (s), false);
+			s = ReadStringConst(stream);
+			FString msg = cht_Morph (players + player, PClass::FindActor(s), false);
 			if (player == consoleplayer)
 			{
 				Printf ("%s\n", msg[0] != '\0' ? msg.GetChars() : "Morph failed.");
@@ -2600,7 +2585,7 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 
 	case DEM_KILLCLASSCHEAT:
 		{
-			s = ReadString (stream);
+			s = ReadStringConst(stream);
 			int killcount = 0;
 			PClassActor *cls = PClass::FindActor(s);
 
@@ -2623,7 +2608,7 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 		break;
 	case DEM_REMOVE:
 	{
-		s = ReadString(stream);
+		s = ReadStringConst(stream);
 		int removecount = 0;
 		PClassActor *cls = PClass::FindActor(s);
 		if (cls != NULL && cls->IsDescendantOf(RUNTIME_CLASS(AActor)))
@@ -2692,12 +2677,8 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 		break;
 
 	case DEM_SETPITCHLIMIT:
-		players[player].MinPitch = -(double)ReadByte(stream);		// up
-		players[player].MaxPitch = (double)ReadByte(stream);		// down
-		break;
-
-	case DEM_ADVANCEINTER:
-		F_AdvanceIntermission();
+		players[player].MinPitch = DAngle::fromDeg(-ReadByte(stream));		// up
+		players[player].MaxPitch = DAngle::fromDeg(ReadByte(stream));		// down
 		break;
 
 	case DEM_REVERTCAMERA:
@@ -2711,23 +2692,24 @@ void Net_DoCommand (int type, uint8_t **stream, int player)
 
 	case DEM_NETEVENT:
 		{
-			s = ReadString(stream);
+			s = ReadStringConst(stream);
 			int argn = ReadByte(stream);
 			int arg[3] = { 0, 0, 0 };
 			for (int i = 0; i < 3; i++)
 				arg[i] = ReadLong(stream);
 			bool manual = !!ReadByte(stream);
-			primaryLevel->localEventManager->Console(player, s, arg[0], arg[1], arg[2], manual);
+			primaryLevel->localEventManager->Console(player, s, arg[0], arg[1], arg[2], manual, false);
 		}
 		break;
 
+	case DEM_ENDSCREENJOB:
+		EndScreenJob();
+		break;
+		
 	default:
 		I_Error ("Unknown net command: %d", type);
 		break;
 	}
-
-	if (s)
-		delete[] s;
 }
 
 // Used by DEM_RUNSCRIPT, DEM_RUNSCRIPT2, and DEM_RUNNAMEDSCRIPT

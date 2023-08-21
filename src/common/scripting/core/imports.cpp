@@ -175,7 +175,7 @@ static int fieldcmp(const void * a, const void * b)
 
 void InitImports()
 {
-	auto fontstruct = NewStruct("FFont", nullptr, true);
+	auto fontstruct = NewStruct("Font", nullptr, true);
 	fontstruct->Size = sizeof(FFont);
 	fontstruct->Align = alignof(FFont);
 	NewPointer(fontstruct, false)->InstallHandlers(
@@ -198,7 +198,8 @@ void InitImports()
 		{
 			assert(afunc->VMPointer != NULL);
 			*(afunc->VMPointer) = new VMNativeFunction(afunc->Function, afunc->FuncName);
-			(*(afunc->VMPointer))->PrintableName.Format("%s.%s [Native]", afunc->ClassName+1, afunc->FuncName);
+			(*(afunc->VMPointer))->QualifiedName = ClassDataAllocator.Strdup(FStringf("%s.%s", afunc->ClassName + 1, afunc->FuncName));
+			(*(afunc->VMPointer))->PrintableName = ClassDataAllocator.Strdup(FStringf("%s.%s [Native]", afunc->ClassName+1, afunc->FuncName));
 			(*(afunc->VMPointer))->DirectNativeCall = afunc->DirectNative;
 			AFTable.Push(*afunc);
 		});

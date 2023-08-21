@@ -1,3 +1,4 @@
+#pragma once
 const char* UnicodeToString(const char* cc);
 const char* StringToUnicode(const char* cc, int size = -1);
 
@@ -42,7 +43,7 @@ struct FWriter
 	rapidjson::StringBuffer mOutString;
 	TArray<DObject *> mDObjects;
 	TMap<DObject *, int> mObjectMap;
-	
+
 	FWriter(bool pretty)
 	{
 		if (!pretty)
@@ -193,7 +194,7 @@ struct FReader
 	rapidjson::Value *FindKey(const char *key)
 	{
 		FJSONObject &obj = mObjects.Last();
-		
+
 		if (obj.mObject->IsObject())
 		{
 			if (key == nullptr)

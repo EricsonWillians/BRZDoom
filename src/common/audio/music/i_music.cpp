@@ -40,7 +40,6 @@
 #include <zlib.h>
 
 #include <zmusic.h>
-#include "m_argv.h"
 #include "filesystem.h"
 #include "c_dispatch.h"
 
@@ -200,7 +199,8 @@ static void SetupWgOpn()
 
 static void SetupDMXGUS()
 {
-	int lump = fileSystem.CheckNumForFullName("DMXGUS");
+	int lump = fileSystem.CheckNumForName("DMXGUSC", ns_global);
+	if (lump < 0) lump = fileSystem.CheckNumForName("DMXGUS", ns_global);
 	if (lump < 0)
 	{
 		return;
@@ -217,16 +217,16 @@ static void SetupDMXGUS()
 //
 //==========================================================================
 
-void I_InitMusic(void)
+void I_InitMusic(int musicstate)
 {
     I_InitSoundFonts();
 
-	snd_musicvolume.Callback ();
+	snd_musicvolume->Callback ();
 
-	nomusic = !!Args->CheckParm("-nomusic") || !!Args->CheckParm("-nosound");
+	nomusic = musicstate;
 
-	snd_mididevice.Callback();
-	
+	snd_mididevice->Callback();
+
 	ZMusicCallbacks callbacks{};
 
 	callbacks.MessageFunc = zmusic_printfunc;
@@ -256,7 +256,7 @@ void I_SetRelativeVolume(float vol)
 {
 	relative_volume = (float)vol;
 	ChangeMusicSetting(zmusic_relative_volume, nullptr, (float)vol);
-	snd_musicvolume.Callback();
+	snd_musicvolume->Callback();
 }
 //==========================================================================
 //

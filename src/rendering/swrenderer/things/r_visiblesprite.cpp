@@ -289,6 +289,9 @@ namespace swrenderer
 			hzt = min(hzt, clip3DFloor.sclipTop);
 		}
 
+		// Make sure bottom clipping stays within the view size
+		botclip = min<short>(botclip, viewheight);
+
 		if (topclip >= botclip)
 		{
 			spr->Light.BaseColormap = colormap;
@@ -313,24 +316,6 @@ namespace swrenderer
 		DrawSegmentList *segmentlist = thread->DrawSegments.get();
 		RenderPortal *renderportal = thread->Portal.get();
 
-		// Render draw segments behind sprite
-		if (r_modelscene)
-		{
-			int subsectordepth = spr->SubsectorDepth;
-			for (unsigned int index = 0; index != segmentlist->TranslucentSegmentsCount(); index++)
-			{
-				DrawSegment *ds = segmentlist->TranslucentSegment(index);
-				if (ds->drawsegclip.SubsectorDepth >= subsectordepth && ds->drawsegclip.CurrentPortalUniq == renderportal->CurrentPortalUniq)
-				{
-					int r1 = max<int>(ds->x1, 0);
-					int r2 = min<int>(ds->x2, viewwidth - 1);
-
-					RenderDrawSegment renderer(thread);
-					renderer.Render(ds, r1, r2, clip3DFloor);
-				}
-			}
-		}
-		else
 		{
 			for (unsigned int index = 0; index != segmentlist->TranslucentSegmentsCount(); index++)
 			{

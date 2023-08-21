@@ -122,25 +122,6 @@ char *copystring (const char *s)
 	return b;
 }
 
-//==========================================================================
-//
-// ReplaceString
-//
-// Do not use in new code.
-//
-//==========================================================================
-
-void ReplaceString (char **ptr, const char *str)
-{
-	if (*ptr)
-	{
-		if (*ptr == str)
-			return;
-		delete[] *ptr;
-	}
-	*ptr = copystring (str);
-}
-
 /*
 =============================================================================
 
@@ -359,7 +340,7 @@ FString StripExtension(const char* path)
 	src = path + strlen(path) - 1;
 
 	//
-	// back up until a . and abort on a \
+	// back up until a . and abort on a '/'
 	//
 	while (src != path && !IsSeperator(*(src - 1)))
 	{
@@ -557,7 +538,7 @@ void CreatePath(const char *fn)
 void CreatePath(const char *fn)
 {
 	char *copy, *p;
- 
+
 	if (fn[0] == '/' && fn[1] == '\0')
 	{
 		return;
@@ -986,7 +967,7 @@ bool IsAbsPath(const char *name)
     if (IsSeperator(name[0])) return true;
 #ifdef _WIN32
     /* [A-Za-z]: (for Windows) */
-    if (isalpha(name[0]) && name[1] == ':')    return true;
+    if (isalpha((uint8_t)name[0]) && name[1] == ':')    return true;
 #endif /* _WIN32 */
     return 0;
 }

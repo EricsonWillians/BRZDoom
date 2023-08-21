@@ -44,6 +44,8 @@
 #include "cmdlib.h"
 #include "keydef.h"
 
+#include "i_mainwindow.h"
+
 // MACROS ------------------------------------------------------------------
 
 #define DEFAULT_DEADZONE			0.25f
@@ -112,6 +114,9 @@ public:
 	bool IsAxisMapDefault(int axis);
 	bool IsAxisScaleDefault(int axis);
 
+	bool GetEnabled();
+	void SetEnabled(bool enabled);
+
 	void SetDefaultConfig();
 	FString GetIdentifier();
 
@@ -151,6 +156,7 @@ protected:
 	bool Connected;
 	bool Marked;
 	bool Active;
+	bool Enabled;
 
 	void Attached();
 	void Detached();
@@ -213,8 +219,6 @@ struct PS2Descriptor
 // PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
 
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
-
-extern HWND Window;
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
@@ -376,6 +380,7 @@ FRawPS2Controller::FRawPS2Controller(HANDLE handle, EAdapterType type, int seque
 	ControllerNumber = controller;
 	Sequence = sequence;
 	DeviceID = devid;
+	Enabled = true;
 
 	// The EMS USB2 controller provides attachment status. The others do not.
 	Connected = (Descriptors[type].ControllerStatus < 0);
@@ -503,7 +508,7 @@ bool FRawPS2Controller::ProcessInput(RAWHID *raw, int code)
 
 	// Generate events for buttons that have changed.
 	int buttons = 0;
-	
+
 	// If we know we are digital, ignore the D-Pad.
 	if (!digital)
 	{
@@ -538,7 +543,7 @@ void FRawPS2Controller::ProcessThumbstick(int value1, AxisInfo *axis1, int value
 {
 	uint8_t buttonstate;
 	double axisval1, axisval2;
-	
+
 	axisval1 = value1 * (2.0 / 255) - 1.0;
 	axisval2 = value2 * (2.0 / 255) - 1.0;
 	axisval1 = Joy_RemoveDeadZone(axisval1, axis1->DeadZone, NULL);
@@ -851,6 +856,28 @@ bool FRawPS2Controller::IsAxisScaleDefault(int axis)
 
 //===========================================================================
 //
+// FRawPS2Controller :: GetEnabled
+//
+//===========================================================================
+
+bool FRawPS2Controller::GetEnabled()
+{
+	return Enabled;
+}
+
+//===========================================================================
+//
+// FRawPS2Controller :: SetEnabled
+//
+//===========================================================================
+
+void FRawPS2Controller::SetEnabled(bool enabled)
+{
+	Enabled = enabled;
+}
+
+//===========================================================================
+//
 // FRawPS2Controller :: IsAxisMapDefault
 //
 //===========================================================================
@@ -905,7 +932,7 @@ bool FRawPS2Manager::GetDevice()
 	rid.usUsagePage = HID_GENERIC_DESKTOP_PAGE;
 	rid.usUsage = HID_GDP_JOYSTICK;
 	rid.dwFlags = RIDEV_INPUTSINK;
-	rid.hwndTarget = Window;
+	rid.hwndTarget = mainwindow.GetHandle();
 	if (!RegisterRawInputDevices(&rid, 1, sizeof(rid)))
 	{
 		return false;
@@ -972,7 +999,7 @@ bool FRawPS2Manager::ProcessRawInput(RAWINPUT *raw, int code)
 	{
 		if (Devices[i]->Handle == raw->header.hDevice)
 		{
-			if (Devices[i]->ProcessInput(&raw->data.hid, code))
+			if (Devices[i]->Enabled && Devices[i]->ProcessInput(&raw->data.hid, code))
 			{
 				return true;
 			}
@@ -1273,7 +1300,7 @@ void FRawPS2Manager::DoRegister()
 		if (!Registered)
 		{
 			rid.dwFlags = RIDEV_INPUTSINK;
-			rid.hwndTarget = Window;
+			rid.hwndTarget = mainwindow.GetHandle();
 			if (RegisterRawInputDevices(&rid, 1, sizeof(rid)))
 			{
 				Registered = true;

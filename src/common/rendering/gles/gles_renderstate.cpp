@@ -6,7 +6,7 @@
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
+// the Free Software Foundation, either version 2 of the License, or
 // (at your option) any later version.
 //
 // This program is distributed in the hope that it will be useful,
@@ -32,6 +32,7 @@
 #include "gles_shader.h"
 #include "gles_renderer.h"
 #include "hw_lightbuffer.h"
+#include "hw_bonebuffer.h"
 #include "gles_renderbuffers.h"
 #include "gles_hwtexture.h"
 #include "gles_buffers.h"
@@ -94,7 +95,7 @@ void FGLRenderState::Reset()
 bool FGLRenderState::ApplyShader()
 {
 	static const float nulvec[] = { 0.f, 0.f, 0.f, 0.f };
-	
+
 	ShaderFlavourData flavour;
 
 	// Need to calc light data now in order to select correct shader
@@ -110,15 +111,13 @@ bool FGLRenderState::ApplyShader()
 	{
 		lightPtr = ((float*)screen->mLights->GetBuffer()->Memory());
 		lightPtr += ((int64_t)mLightIndex * 4);
-		//float array[64];
-		//memcpy(array, ptr, 4 * 64);
 
 		// Calculate how much light data there is to upload, this is stored in the first 4 floats
 		modLights = int(lightPtr[1]) / LIGHT_VEC4_NUM;
 		subLights = (int(lightPtr[2]) - int(lightPtr[1])) / LIGHT_VEC4_NUM;
 		addLights = (int(lightPtr[3]) - int(lightPtr[2])) / LIGHT_VEC4_NUM;
 
-		// Here we limit the number of lights, but dont' change the light data so priority has to be mod, sub then add
+		// Here we limit the number of lights, but don't change the light data so priority has to be mod, sub then add
 		if (modLights > (int)gles.maxlights)
 			modLights = gles.maxlights;
 
@@ -127,7 +126,7 @@ bool FGLRenderState::ApplyShader()
 
 		if (modLights + subLights + addLights > (int)gles.maxlights)
 			addLights = gles.maxlights - modLights - subLights;
-		
+
 		totalLights = modLights + subLights + addLights;
 
 		// Skip passed the first 4 floats so the upload below only contains light data
@@ -152,12 +151,13 @@ bool FGLRenderState::ApplyShader()
 	flavour.texFlags = tm >> 16; //Move flags to start of word
 
 	if (mTextureClamp && flavour.textureMode == TM_NORMAL) flavour.textureMode = TM_CLAMPY; // fixme. Clamp can now be combined with all modes.
-	
+
 	if (flavour.textureMode == -1)
 		flavour.textureMode = 0;
 
 
 	flavour.blendFlags = (int)(mStreamData.uTextureAddColor.a + 0.01);
+	flavour.paletteInterpolate = !!(flavour.blendFlags & 0x4000);
 
 	flavour.twoDFog = false;
 	flavour.fogEnabled = false;
@@ -165,7 +165,7 @@ bool FGLRenderState::ApplyShader()
 	flavour.colouredFog = false;
 
 	flavour.fogEquationRadial = (gl_fogmode == 2);
-	
+
 	flavour.twoDFog = false;
 	flavour.fogEnabled = false;
 	flavour.colouredFog = false;
@@ -196,7 +196,7 @@ bool FGLRenderState::ApplyShader()
 	flavour.useObjectColor2 = (mStreamData.uObjectColor2.a > 0);
 	flavour.useGlowTopColor = mGlowEnabled && (mStreamData.uGlowTopColor[3] > 0);
 	flavour.useGlowBottomColor = mGlowEnabled && (mStreamData.uGlowBottomColor[3] > 0);
-	
+
 	flavour.useColorMap = (mColorMapSpecial >= CM_FIRSTSPECIALCOLORMAP) || (mColorMapFlash != 1);
 
 	flavour.buildLighting = (mHwUniforms->mPalLightLevels >> 16) == 5; // Build engine mode
@@ -217,18 +217,15 @@ bool FGLRenderState::ApplyShader()
 		activeShader->Bind(flavour);
 	}
 
-	
+
 	if (mHwUniforms)
 	{
 		activeShader->cur->muProjectionMatrix.Set(&mHwUniforms->mProjectionMatrix);
 		activeShader->cur->muViewMatrix.Set(&mHwUniforms->mViewMatrix);
 		activeShader->cur->muNormalViewMatrix.Set(&mHwUniforms->mNormalViewMatrix);
-
 		activeShader->cur->muCameraPos.Set(&mHwUniforms->mCameraPos.X);
 		activeShader->cur->muClipLine.Set(&mHwUniforms->mClipLine.X);
-
 		activeShader->cur->muGlobVis.Set(mHwUniforms->mGlobVis);
-
 		activeShader->cur->muPalLightLevels.Set(mHwUniforms->mPalLightLevels & 0xFF); // JUST pass the pal levels, clear the top bits
 		activeShader->cur->muViewHeight.Set(mHwUniforms->mViewHeight);
 		activeShader->cur->muClipHeight.Set(mHwUniforms->mClipHeight);
@@ -249,6 +246,7 @@ bool FGLRenderState::ApplyShader()
 	activeShader->cur->muInterpolationFactor.Set(mStreamData.uInterpolationFactor);
 	activeShader->cur->muTimer.Set((double)(screen->FrameTime - firstFrame) * (double)mShaderTimer / 1000.);
 	activeShader->cur->muAlphaThreshold.Set(mAlphaThreshold);
+	activeShader->cur->muBoneIndexBase.Set(-1);
 	activeShader->cur->muClipSplit.Set(mClipSplit);
 	activeShader->cur->muSpecularMaterial.Set(mGlossiness, mSpecularLevel);
 	activeShader->cur->muAddColor.Set(mStreamData.uAddColor);
@@ -334,7 +332,7 @@ bool FGLRenderState::ApplyShader()
 	{
 		// Calculate the total number of vec4s we need
 		int totalVectors = totalLights * LIGHT_VEC4_NUM;
-	
+
 		if (totalVectors > (int)gles.numlightvectors)
 			totalVectors = gles.numlightvectors;
 
@@ -347,7 +345,24 @@ bool FGLRenderState::ApplyShader()
 
 		activeShader->cur->muLightRange.Set(range);
 	}
-	
+
+	if (gles.glesMode >= GLES_MODE_OGL3)
+	{
+		// Upload bone data
+		// NOTE, this is pretty inefficient, it will be reloading the same data over and over in a single frame
+		// Need to add something to detect a start of new frame then only update the data when it's been changed
+		if ((mBoneIndexBase >= 0))
+		{
+			float* bonesPtr = ((float*)screen->mBones->GetBuffer()->Memory());
+
+			int number = screen->mBones->GetCurrentIndex();
+
+			glUniformMatrix4fv(activeShader->cur->bones_index, number, false, bonesPtr);
+
+			activeShader->cur->muBoneIndexBase.Set(mBoneIndexBase);
+		}
+	}
+
 	return true;
 }
 
@@ -368,18 +383,6 @@ void FGLRenderState::ApplyState()
 
 	if (mSplitEnabled != stSplitEnabled)
 	{
-		/*
-		if (mSplitEnabled)
-		{
-			glEnable(GL_CLIP_DISTANCE3);
-			glEnable(GL_CLIP_DISTANCE4);
-		}
-		else
-		{
-			glDisable(GL_CLIP_DISTANCE3);
-			glDisable(GL_CLIP_DISTANCE4);
-		}
-		*/
 		stSplitEnabled = mSplitEnabled;
 	}
 
@@ -389,19 +392,17 @@ void FGLRenderState::ApplyState()
 		mMaterial.mChanged = false;
 	}
 
-	if (mBias.mChanged)
+
+	if (mBias.mFactor == 0 && mBias.mUnits == 0)
 	{
-		if (mBias.mFactor == 0 && mBias.mUnits == 0)
-		{
-			glDisable(GL_POLYGON_OFFSET_FILL);
-		}
-		else
-		{
-			glEnable(GL_POLYGON_OFFSET_FILL);
-		}
-		glPolygonOffset(mBias.mFactor, mBias.mUnits);
-		mBias.mChanged = false;
+		glDisable(GL_POLYGON_OFFSET_FILL);
 	}
+	else
+	{
+		glEnable(GL_POLYGON_OFFSET_FILL);
+	}
+	glPolygonOffset(mBias.mFactor, mBias.mUnits);
+	mBias.mChanged = false;
 }
 
 void FGLRenderState::ApplyBuffers()
@@ -451,14 +452,13 @@ void FGLRenderState::ApplyMaterial(FMaterial *mat, int clampmode, int translatio
 	if (tex->isHardwareCanvas()) static_cast<FCanvasTexture*>(tex->GetTexture())->NeedUpdate();
 
 	clampmode = tex->GetClampMode(clampmode);
-	
+
 	// avoid rebinding the same texture multiple times.
 	if (mat == lastMaterial && lastClamp == clampmode && translation == lastTranslation) return;
 	lastMaterial = mat;
 	lastClamp = clampmode;
 	lastTranslation = translation;
 
-	int usebright = false;
 	int maxbound = 0;
 
 	int numLayers = mat->NumLayers();

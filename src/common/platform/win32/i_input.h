@@ -82,7 +82,6 @@ protected:
 	void ClearButtonState();
 
 	int WheelMove[2];
-	int LastX, LastY;	// for m_filter
 	int ButtonState;	// bit mask of current button states (1=down, 0=up)
 };
 
@@ -116,7 +115,7 @@ protected:
 	void PostKeyEvent(int keynum, INTBOOL down, bool foreground);
 };
 
-class NOVTABLE FJoystickCollection : public FInputDevice
+class FJoystickCollection : public FInputDevice
 {
 public:
 	virtual void AddAxes(float axes[NUM_JOYAXIS]) = 0;

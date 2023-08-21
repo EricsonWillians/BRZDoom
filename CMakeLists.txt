@@ -1,10 +1,4 @@
-cmake_minimum_required( VERSION 3.1.0 )
-project(GZDoom)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF) 
-
+cmake_minimum_required( VERSION 3.16 )
 
 if( COMMAND cmake_policy )
 	if( POLICY CMP0011 )
@@ -13,7 +7,21 @@ if( COMMAND cmake_policy )
 	if( POLICY CMP0054 )
 		cmake_policy( SET CMP0054 NEW )
 	endif()
+	if ( POLICY CMP0067 )
+		cmake_policy( SET CMP0067 NEW )
+	endif()
+	if ( POLICY CMP0091 )
+		cmake_policy( SET CMP0091 NEW )
+		set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+	endif()
 endif()
+
+project(GZDoom)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF) 
+
 
 list( APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake )
 include( FindPackageHandleStandardArgs )
@@ -139,25 +147,18 @@ else()
 endif()
 
 if( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" )
-	set( ZD_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE TRUE )
+	set( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE TRUE )
 else()
-	set( ZD_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE FALSE )
+	set( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE FALSE )
 endif()
 
-if( ZD_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
+if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
 	set( PROFILE 0 CACHE BOOL "Enable profiling with gprof for Debug and RelWithDebInfo build types." )
-
-	if( CMAKE_CXX_STANDARD )
-		# By default, try_compile() invocations ignore CXX_STANDARD value
-		# CMake 3.8 and newer have CMP0067 policy that fixes the issue, but it should be enabled explicitly
-		# Older versions require manual specification of the corresponding command line option
-		set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++${CMAKE_CXX_STANDARD}" )
-	endif()
 endif()
 
 # Fast math flags, required by some subprojects
 set( ZD_FASTMATH_FLAG "" )
-if( ZD_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
+if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
 	set( ZD_FASTMATH_FLAG "-ffast-math -ffp-contract=fast" )
 elseif( MSVC )
 	set( ZD_FASTMATH_FLAG "/fp:fast" )
@@ -189,13 +190,14 @@ option( NO_OPENAL "Disable OpenAL sound support" OFF )
 
 find_package( BZip2 )
 find_package( JPEG )
+find_package( VPX )
 find_package( ZLIB )
 
 include( TargetArch )
 
-target_architecture(ZDOOM_TARGET_ARCH)
+target_architecture(TARGET_ARCHITECTURE)
 
-if( ${ZDOOM_TARGET_ARCH} MATCHES "x86_64" )
+if( ${TARGET_ARCHITECTURE} MATCHES "x86_64" )
 	set( HAVE_VM_JIT ON )
 endif()
 
@@ -217,7 +219,7 @@ if( MSVC )
 	# String pooling
 	# Function-level linking
 	# Disable run-time type information
-	set( ALL_C_FLAGS "/GF /Gy /permissive- /DHAVE_SOFTPOLY" )
+	set( ALL_C_FLAGS "/GF /Gy /permissive-" )
 
 	if ( HAVE_VULKAN )
 		set( ALL_C_FLAGS "${ALL_C_FLAGS} /DHAVE_VULKAN" )
@@ -235,31 +237,22 @@ if( MSVC )
 	# Avoid CRT DLL dependancies in release builds, optionally generate assembly output for checking crash locations.
 	option( ZDOOM_GENERATE_ASM "Generate assembly output." OFF )
 	if( ZDOOM_GENERATE_ASM )
-		set( REL_C_FLAGS "/MT /Oy /Oi /FAcs /GS-" )
+		set( REL_C_FLAGS "/Oy /Oi /FAcs /GS-" )
 	else()
-		set( REL_C_FLAGS "/MT /Oy /Oi /GS-" )
+		set( REL_C_FLAGS "/Oy /Oi /GS-" )
 	endif()
 
 
 	# Debug allocations in debug builds
-	set( DEB_C_FLAGS "/D _CRTDBG_MAP_ALLOC /MTd" )
+	set( DEB_C_FLAGS "/D _CRTDBG_MAP_ALLOC" )
 
 	# Disable warnings for unsecure CRT functions from VC8+
-	set( ALL_C_FLAGS "${ALL_C_FLAGS} /wd4996 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0600" )
+	set( ALL_C_FLAGS "${ALL_C_FLAGS} /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0600 /D_CRT_SECURE_NO_DEPRECATE /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_WARNINGS" )
 
-	# The CMake configurations set /GR and /MD by default, which conflict with our settings.
-	string(REPLACE "/MD " " " CMAKE_CXX_FLAGS_RELEASE ${CMAKE_CXX_FLAGS_RELEASE} )
-	string(REPLACE "/MD " " " CMAKE_CXX_FLAGS_MINSIZEREL ${CMAKE_CXX_FLAGS_MINSIZEREL} )
-	string(REPLACE "/MD " " " CMAKE_CXX_FLAGS_RELWITHDEBINFO ${CMAKE_CXX_FLAGS_RELWITHDEBINFO} )
 	string(REPLACE "/Ob1 " "/Ob2 " CMAKE_CXX_FLAGS_RELWITHDEBINFO ${CMAKE_CXX_FLAGS_RELWITHDEBINFO} )
-	string(REPLACE "/MDd " " " CMAKE_CXX_FLAGS_DEBUG ${CMAKE_CXX_FLAGS_DEBUG} )
-	string(REPLACE "/MD " " " CMAKE_C_FLAGS_RELEASE ${CMAKE_C_FLAGS_RELEASE} )
-	string(REPLACE "/MD " " " CMAKE_C_FLAGS_MINSIZEREL ${CMAKE_C_FLAGS_MINSIZEREL} )
-	string(REPLACE "/MD " " " CMAKE_C_FLAGS_RELWITHDEBINFO ${CMAKE_C_FLAGS_RELWITHDEBINFO} )
-	string(REPLACE "/MDd " " " CMAKE_C_FLAGS_DEBUG ${CMAKE_C_FLAGS_DEBUG} )
 else()
 	set( REL_LINKER_FLAGS "" )
-	set( ALL_C_FLAGS "-ffp-contract=off -DHAVE_SOFTPOLY" )
+	set( ALL_C_FLAGS "-ffp-contract=off" )
 
 	if ( HAVE_VULKAN )
 		set( ALL_C_FLAGS "${ALL_C_FLAGS} -DHAVE_VULKAN" )
@@ -323,10 +316,13 @@ option(FORCE_INTERNAL_ASMJIT "Use internal asmjit" ON)
 mark_as_advanced( FORCE_INTERNAL_ASMJIT )
 
 if (HAVE_VULKAN)
-	add_subdirectory( libraries/glslang/glslang)
-	add_subdirectory( libraries/glslang/spirv )
-	add_subdirectory( libraries/glslang/OGLCompilersDLL )
+	add_subdirectory( libraries/ZVulkan )
 endif()
+
+add_subdirectory( libraries/discordrpc EXCLUDE_FROM_ALL )
+set( DRPC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libraries/discordrpc/include" )
+set( DRPC_LIBRARIES discord-rpc )
+set( DRPC_LIBRARY discord-rpc )
 
 if( ZLIB_FOUND AND NOT FORCE_INTERNAL_ZLIB )
 	message( STATUS "Using system zlib, includes found at ${ZLIB_INCLUDE_DIR}" )
@@ -386,7 +382,6 @@ else()
 	set( BZIP2_LIBRARY bz2 )
 endif()
 
-
 set( LZMA_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libraries/lzma/C" )
 
 if( NOT CMAKE_CROSSCOMPILING )
@@ -409,7 +404,6 @@ option( DYN_OPENAL "Dynamically load OpenAL" ON )
 
 add_subdirectory( libraries/lzma )
 add_subdirectory( tools )
-add_subdirectory( libraries/gdtoa )
 add_subdirectory( wadsrc )
 add_subdirectory( wadsrc_bm )
 add_subdirectory( wadsrc_lights )

@@ -130,25 +130,47 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 
 	int sourcetype;
 
-
-#if USE_GLES2
-	sourcetype = GL_BGRA;
-	texformat = GL_BGRA;
-#else
-	if (glTextureBytes == 1)
+	if (gles.glesMode == GLES_MODE_GLES)
 	{
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		sourcetype = GL_RED;
-		texformat = GL_R8;
+		if (glTextureBytes == 1)
+		{
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			sourcetype = GL_ALPHA;
+			texformat = GL_ALPHA;
+		}
+		else
+		{
+			sourcetype = GL_BGRA; // These two must be the same
+			texformat = GL_BGRA;
+		}
 	}
 	else
 	{
-		sourcetype = GL_BGRA;
-		texformat = GL_RGBA;
+		if (glTextureBytes == 1) //Use Red channel instread becuase Alpha does not work in OpenGL, swizzle later
+		{
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			sourcetype = GL_RED;
+			texformat = GL_RED;
+		}
+		else
+		{
+			sourcetype = GL_BGRA;
+			texformat = GL_RGBA;
+		}
 	}
-#endif
 
 	glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, sourcetype, GL_UNSIGNED_BYTE, buffer);
+
+	if (gles.glesMode != GLES_MODE_GLES)
+	{
+		// The shader is using the alpha channel instead of red, this work on GLES but not on GL
+		// So the texture uses GL_RED and this swizzels the red channel into the alpha channel
+		if (glTextureBytes == 1)
+		{
+			GLint swizzleMask[] = { GL_ZERO, GL_ZERO, GL_ZERO, GL_RED };
+			glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask);
+		}
+	}
 
 	if (deletebuffer && buffer) free(buffer);
 
@@ -157,7 +179,7 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 		glGenerateMipmap(GL_TEXTURE_2D);
 		mipmapped = true;
 	}
-	
+
 	if (texunit > 0) glActiveTexture(GL_TEXTURE0);
 	else if (texunit == -1) glBindTexture(GL_TEXTURE_2D, textureBinding);
 	return glTexID;
@@ -166,9 +188,6 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 
 void FHardwareTexture::AllocateBuffer(int w, int h, int texelsize) 
 {	
-	int rw = GetTexDimension(w);
-	int rh = GetTexDimension(h);
-
 	if (texelsize < 1 || texelsize > 4) texelsize = 4;
 	glTextureBytes = texelsize;
 	bufferpitch = w;
@@ -287,8 +306,6 @@ void FHardwareTexture::BindToFrameBuffer(int width, int height)
 
 bool FHardwareTexture::BindOrCreate(FTexture *tex, int texunit, int clampmode, int translation, int flags)
 {
-	int usebright = false;
-
 	bool needmipmap = (clampmode <= CLAMP_XY) && !forcenofilter;
 
 	// Bind it to the system.
@@ -303,7 +320,7 @@ bool FHardwareTexture::BindOrCreate(FTexture *tex, int texunit, int clampmode, i
 		int w = 0, h = 0;
 
 		// Create this texture
-		
+
 		FTextureBuffer texbuffer;
 
 		if (!tex->isHardwareCanvas())

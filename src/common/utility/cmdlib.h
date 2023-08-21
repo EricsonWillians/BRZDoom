@@ -54,7 +54,6 @@ struct FScriptPosition;
 bool	IsNum (const char *str);		// [RH] added
 
 char	*copystring(const char *s);
-void	ReplaceString (char **ptr, const char *str);
 
 bool CheckWildcards (const char *pattern, const char *text);
 
@@ -80,9 +79,14 @@ bool ScanDirectory(TArray<FFileList> &list, const char *dirpath);
 bool IsAbsPath(const char*);
 FString M_ZLibError(int zerrnum);
 
-inline int32_t Scale(int32_t a, int32_t b, int32_t c)
+inline constexpr int32_t Scale(int32_t a, int32_t b, int32_t c)
 {
 	return (int32_t)(((int64_t)a * b) / c);
+}
+
+inline constexpr double Scale(double a, double b, double c)
+{
+	return (a * b) / c;
 }
 
 class FileReader;
@@ -100,7 +104,7 @@ inline void fillshort(void* buff, size_t count, uint16_t clear)
 	}
 }
 
-template<typename T> inline constexpr T Sgn(const T& val) { return (val > 0) - (val < 0); }
+template<typename T> inline constexpr int Sgn(const T& val) { return (val > 0) - (val < 0); }
 
 
 inline int sizeToBits(int w)

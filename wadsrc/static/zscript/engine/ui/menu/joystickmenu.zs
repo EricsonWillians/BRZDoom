@@ -41,7 +41,7 @@
 class OptionMenuSliderJoySensitivity : OptionMenuSliderBase
 {
 	JoystickConfig mJoy;
-	
+
 	OptionMenuSliderJoySensitivity Init(String label, double min, double max, double step, int showval, JoystickConfig joy)
 	{
 		Super.Init(label, min, max, step, showval);
@@ -71,7 +71,7 @@ class OptionMenuSliderJoyScale : OptionMenuSliderBase
 	int mAxis;
 	int mNeg;
 	JoystickConfig mJoy;
-		
+
 	OptionMenuSliderJoyScale Init(String label, int axis, double min, double max, double step, int showval, JoystickConfig joy)
 	{
 		Super.Init(label, min, max, step, showval);
@@ -138,7 +138,7 @@ class OptionMenuItemJoyMap : OptionMenuItemOptionBase
 {
 	int mAxis;
 	JoystickConfig mJoy;
-	
+
 	OptionMenuItemJoyMap Init(String label, int axis, Name values, int center, JoystickConfig joy)
 	{
 		Super.Init(label, 'none', values, null, center);
@@ -191,7 +191,7 @@ class OptionMenuItemInverter : OptionMenuItemOptionBase
 {
 	int mAxis;
 	JoystickConfig mJoy;
-	
+
 	OptionMenuItemInverter Init(String label, int axis, int center, JoystickConfig joy)
 	{
 		Super.Init(label, "none", "YesNo", NULL, center);
@@ -220,10 +220,33 @@ class OptionMenuItemInverter : OptionMenuItemOptionBase
 //
 //=============================================================================
 
+
+class OptionMenuJoyEnable : OptionMenuItemOptionBase
+{
+	JoystickConfig mJoy;
+
+	OptionMenuJoyEnable Init(String label, JoystickConfig joy)
+	{
+		Super.Init(label,"none","YesNo",null,0);
+		mJoy = joy;
+		return self;
+	}
+
+	override int GetSelection()
+	{
+		return mJoy.GetEnabled() ? 1 : 0;
+	}
+
+	override void SetSelection(int Selection)
+	{
+		mJoy.SetEnabled(Selection);
+	}
+}
+
 class OptionMenuItemJoyConfigMenu : OptionMenuItemSubmenu
 {
 	JoystickConfig mJoy;
-	
+
 	OptionMenuItemJoyConfigMenu Init(String label, JoystickConfig joy)
 	{
 		Super.Init(label, "JoystickConfigMenu");
@@ -243,7 +266,7 @@ class OptionMenuItemJoyConfigMenu : OptionMenuItemSubmenu
 		if (res && joymenu != null) joymenu.mJoy = mJoy;
 		return res;
 	}
-	
+
 	static void SetController(OptionMenuDescriptor opt, JoystickConfig joy)
 	{
 		OptionMenuItem it;
@@ -258,6 +281,9 @@ class OptionMenuItemJoyConfigMenu : OptionMenuItemSubmenu
 		{
 			it = new("OptionMenuItemStaticText").Init(joy.GetName(), false);
 			it = new("OptionMenuItemStaticText").Init("", false);
+
+			it = new("OptionMenuJoyEnable").Init("$JOYMNU_JOYENABLE", joy);
+			opt.mItems.Push(it);
 
 			it = new("OptionMenuSliderJoySensitivity").Init("$JOYMNU_OVRSENS", 0, 2, 0.1, 3, joy);
 			opt.mItems.Push(it);
@@ -296,7 +322,7 @@ class OptionMenuItemJoyConfigMenu : OptionMenuItemSubmenu
 		opt.mPosition = -25;
 		opt.CalcIndent();
 	}
-	
+
 }
 
 //=============================================================================

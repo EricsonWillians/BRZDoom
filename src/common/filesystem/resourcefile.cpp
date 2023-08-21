@@ -223,46 +223,54 @@ int FResourceLump::Unlock()
 //
 //==========================================================================
 
-typedef FResourceFile * (*CheckFunc)(const char *filename, FileReader &file, bool quiet, LumpFilterInfo* filter);
+typedef FResourceFile * (*CheckFunc)(const char *filename, FileReader &file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
 
-FResourceFile *CheckWad(const char *filename, FileReader &file, bool quiet, LumpFilterInfo* filter);
-FResourceFile *CheckGRP(const char *filename, FileReader &file, bool quiet, LumpFilterInfo* filter);
-FResourceFile *CheckRFF(const char *filename, FileReader &file, bool quiet, LumpFilterInfo* filter);
-FResourceFile *CheckPak(const char *filename, FileReader &file, bool quiet, LumpFilterInfo* filter);
-FResourceFile *CheckZip(const char *filename, FileReader &file, bool quiet, LumpFilterInfo* filter);
-FResourceFile *Check7Z(const char *filename,  FileReader &file, bool quiet, LumpFilterInfo* filter);
-FResourceFile* CheckSSI(const char* filename, FileReader& file, bool quiet, LumpFilterInfo* filter);
-FResourceFile *CheckLump(const char *filename,FileReader &file, bool quiet, LumpFilterInfo* filter);
-FResourceFile *CheckDir(const char *filename, bool quiet, bool nosub, LumpFilterInfo* filter);
+FResourceFile *CheckWad(const char *filename, FileReader &file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile *CheckGRP(const char *filename, FileReader &file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile *CheckRFF(const char *filename, FileReader &file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile *CheckPak(const char *filename, FileReader &file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile *CheckZip(const char *filename, FileReader &file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile *Check7Z(const char *filename,  FileReader &file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile* CheckSSI(const char* filename, FileReader& file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile* CheckWHRes(const char* filename, FileReader& file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile *CheckLump(const char *filename,FileReader &file, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
+FResourceFile *CheckDir(const char *filename, bool nosub, LumpFilterInfo* filter, FileSystemMessageFunc Printf);
 
-static CheckFunc funcs[] = { CheckWad, CheckZip, Check7Z, CheckPak, CheckGRP, CheckRFF, CheckSSI, CheckLump };
+static CheckFunc funcs[] = { CheckWad, CheckZip, Check7Z, CheckPak, CheckGRP, CheckRFF, CheckSSI, CheckWHRes, CheckLump };
 
-FResourceFile *FResourceFile::DoOpenResourceFile(const char *filename, FileReader &file, bool quiet, bool containeronly, LumpFilterInfo* filter)
+static int nulPrintf(FSMessageLevel msg, const char* fmt, ...)
 {
+	return 0;
+}
+
+FResourceFile *FResourceFile::DoOpenResourceFile(const char *filename, FileReader &file, bool containeronly, LumpFilterInfo* filter, FileSystemMessageFunc Printf)
+{
+	if (Printf == nullptr) Printf = nulPrintf;
 	for(size_t i = 0; i < countof(funcs) - containeronly; i++)
 	{
-		FResourceFile *resfile = funcs[i](filename, file, quiet, filter);
+		FResourceFile *resfile = funcs[i](filename, file, filter, Printf);
 		if (resfile != NULL) return resfile;
 	}
 	return NULL;
 }
 
-FResourceFile *FResourceFile::OpenResourceFile(const char *filename, FileReader &file, bool quiet, bool containeronly, LumpFilterInfo* filter)
+FResourceFile *FResourceFile::OpenResourceFile(const char *filename, FileReader &file, bool containeronly, LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 {
-	return DoOpenResourceFile(filename, file, quiet, containeronly, filter);
+	return DoOpenResourceFile(filename, file, containeronly, filter, Printf);
 }
 
 
-FResourceFile *FResourceFile::OpenResourceFile(const char *filename, bool quiet, bool containeronly, LumpFilterInfo* filter)
+FResourceFile *FResourceFile::OpenResourceFile(const char *filename, bool containeronly, LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 {
 	FileReader file;
 	if (!file.OpenFile(filename)) return nullptr;
-	return DoOpenResourceFile(filename, file, quiet, containeronly, filter);
+	return DoOpenResourceFile(filename, file, containeronly, filter, Printf);
 }
 
-FResourceFile *FResourceFile::OpenDirectory(const char *filename, bool quiet, LumpFilterInfo* filter)
+FResourceFile *FResourceFile::OpenDirectory(const char *filename, LumpFilterInfo* filter, FileSystemMessageFunc Printf)
 {
-	return CheckDir(filename, quiet, false, filter);
+	if (Printf == nullptr) Printf = nulPrintf;
+	return CheckDir(filename, false, filter, Printf);
 }
 
 //==========================================================================
@@ -306,11 +314,11 @@ int lumpcmp(const void * a, const void * b)
 void FResourceFile::GenerateHash()
 {
 	// hash the lump directory after sorting
-	
+
 	Hash.Format(("%08X-%04X-"), (unsigned)Reader.GetLength(), NumLumps);
-	
+
 	MD5Context md5;
-	
+
 	uint8_t digest[16];
 	for(uint32_t i = 0; i < NumLumps; i++)
 	{
@@ -382,9 +390,9 @@ int FResourceFile::FilterLumps(FString filtername, void *lumps, size_t lumpsize,
 		return 0;
 	}
 	filter << "filter/" << filtername << '/';
-	
+
 	bool found = FindPrefixRange(filter, lumps, lumpsize, max, start, end);
-	
+
 	// Workaround for old Doom filter names.
 	if (!found && filtername.IndexOf("doom.id.doom") == 0)
 	{
@@ -490,7 +498,7 @@ bool FResourceFile::FindPrefixRange(FString filter, void *lumps, size_t lumpsize
 {
 	uint32_t min, max, mid, inside;
 	FResourceLump *lump;
-	int cmp;
+	int cmp = 0;
 
 	end = start = 0;
 
@@ -499,7 +507,7 @@ bool FResourceFile::FindPrefixRange(FString filter, void *lumps, size_t lumpsize
 	lumps = (uint8_t *)lumps - lumpsize;
 
 	// Binary search to find any match at all.
-	min = 1, max = maxlump;
+	mid = min = 1, max = maxlump;
 	while (min <= max)
 	{
 		mid = min + (max - min) / 2;
